@@ -166,6 +166,9 @@ func (s *Scanner) ScanMetadata() ([]FileMeta, []string, error) {
 		if err != nil {
 			return nil
 		}
+		// Store/compare paths with forward slashes so Windows scans match
+		// Postgres / workspace ListDocuments keys (see IndexAll orphan delete).
+		relPath = filepath.ToSlash(relPath)
 
 		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
 		if d.IsDir() {
@@ -228,6 +231,7 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 		if err != nil {
 			return nil
 		}
+		relPath = filepath.ToSlash(relPath)
 
 		// Handle directories: use ShouldSkipDir to respect .grepaiignore negations
 		if d.IsDir() {
@@ -294,7 +298,8 @@ func (s *Scanner) Scan() ([]FileInfo, []string, error) {
 }
 
 func (s *Scanner) ScanFile(relPath string) (*FileInfo, error) {
-	absPath := filepath.Join(s.root, relPath)
+	relPath = filepath.ToSlash(relPath)
+	absPath := filepath.Join(s.root, filepath.FromSlash(relPath))
 
 	// Skip minified files
 	if isMinifiedFile(relPath) {
