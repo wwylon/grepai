@@ -16,6 +16,8 @@ import (
 var (
 	workspaceCreateUI bool
 	workspaceStatusUI bool
+	workspaceAddName  string
+	workspaceAddMeta  []string
 )
 
 var (
@@ -68,7 +70,9 @@ var workspaceAddCmd = &cobra.Command{
 	Short: "Add a project to a workspace",
 	Long: `Add a project to an existing workspace.
 
-The project name will be derived from the directory name.
+The project name defaults to the directory name unless --name is set.
+Optional --metadata key=value annotations are stored on the project
+(for example upstream=frontend and ref=feature-branch).
 The project path must be an absolute path to a directory.`,
 	Args: cobra.ExactArgs(2),
 	RunE: runWorkspaceAdd,
@@ -110,6 +114,8 @@ func init() {
 	workspaceCreateCmd.Flags().Bool("yes", false, "Use defaults for unspecified values, skip prompts")
 	workspaceCreateCmd.Flags().BoolVar(&workspaceCreateUI, "ui", false, "Run interactive Bubble Tea UI wizard")
 	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusUI, "ui", false, "Show workspace status in interactive UI")
+	workspaceAddCmd.Flags().StringVar(&workspaceAddName, "name", "", "Project name (default: directory name)")
+	workspaceAddCmd.Flags().StringArrayVar(&workspaceAddMeta, "metadata", nil, "Optional key=value metadata (repeatable)")
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
@@ -180,6 +186,9 @@ func runWorkspaceShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nProjects (%d):\n", len(ws.Projects))
 	for _, p := range ws.Projects {
 		fmt.Printf("  - %s: %s\n", p.Name, p.Path)
+		if len(p.Metadata) > 0 {
+			fmt.Printf("    metadata: %v\n", p.Metadata)
+		}
 	}
 
 	return nil
@@ -607,11 +616,19 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 
 	// Derive project name from directory
 	projectName := filepath.Base(absPath)
+	if workspaceAddName != "" {
+		projectName = workspaceAddName
+	}
+	meta, err := parseMetadataFlags(workspaceAddMeta)
+	if err != nil {
+		return err
+	}
 
 	// Add project
 	if err := cfg.AddProject(workspaceName, config.ProjectEntry{
-		Name: projectName,
-		Path: absPath,
+		Name:     projectName,
+		Path:     absPath,
+		Metadata: meta,
 	}); err != nil {
 		return err
 	}
@@ -676,6 +693,21 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Deleted workspace %q\n", workspaceName)
 	return nil
+}
+
+func parseMetadataFlags(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid --metadata %q (want key=value)", p)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 // maskDSN masks password in DSN for display

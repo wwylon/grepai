@@ -132,6 +132,9 @@ workspaces:
         path: /path/to/frontend
       - name: backend
         path: /path/to/backend
+        metadata:
+          upstream: frontend
+          ref: feature-branch
       - name: shared-lib
         path: /path/to/shared-lib
 ```
@@ -159,6 +162,7 @@ grepai workspace delete my-fullstack
 ```bash
 # Add project to workspace
 grepai workspace add my-fullstack /path/to/project
+grepai workspace add my-fullstack /path/to/worktree --name feature --metadata upstream=frontend
 
 # Remove project from workspace
 grepai workspace remove my-fullstack project-name

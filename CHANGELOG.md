@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional project metadata**: workspace projects may include a `metadata` string map (`grepai workspace add --metadata key=value`, optional `--name`)
+
 ## [0.38.0] - 2026-10-24
 
 ### Added
