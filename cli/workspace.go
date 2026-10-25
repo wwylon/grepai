@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	workspaceCreateUI bool
-	workspaceStatusUI bool
+	workspaceCreateUI   bool
+	workspaceStatusUI   bool
+	workspaceStatusJSON bool
 )
 
 var (
@@ -52,8 +54,11 @@ var workspaceShowCmd = &cobra.Command{
 var workspaceStatusCmd = &cobra.Command{
 	Use:   "status [name]",
 	Short: "Show workspace indexing status",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runWorkspaceStatus,
+	Long: `Show membership and per-project index stats (documents, chunks, size, last update).
+
+Use --json for machine-readable output.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceStatus,
 }
 
 var workspaceCreateCmd = &cobra.Command{
@@ -110,6 +115,7 @@ func init() {
 	workspaceCreateCmd.Flags().Bool("yes", false, "Use defaults for unspecified values, skip prompts")
 	workspaceCreateCmd.Flags().BoolVar(&workspaceCreateUI, "ui", false, "Run interactive Bubble Tea UI wizard")
 	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusUI, "ui", false, "Show workspace status in interactive UI")
+	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusJSON, "json", false, "Print per-project index stats as JSON")
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
@@ -202,13 +208,13 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if workspaceStatusUI && workspaceStatusUISelector(isInteractiveTerminal(), false) {
+		if workspaceStatusUI && !workspaceStatusJSON && workspaceStatusUISelector(isInteractiveTerminal(), false) {
 			return workspaceStatusUIRunner(cfg, args)
 		}
 		return showWorkspaceStatus(ws)
 	}
 
-	if workspaceStatusUI && workspaceStatusUISelector(isInteractiveTerminal(), false) {
+	if workspaceStatusUI && !workspaceStatusJSON && workspaceStatusUISelector(isInteractiveTerminal(), false) {
 		return workspaceStatusUIRunner(cfg, args)
 	}
 
@@ -224,19 +230,16 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 }
 
 func showWorkspaceStatus(ws *config.Workspace) error {
-	fmt.Printf("Workspace: %s\n", ws.Name)
-	fmt.Printf("  Backend: %s\n", ws.Store.Backend)
-	fmt.Printf("  Projects: %d\n", len(ws.Projects))
-
-	// Check if each project path exists
-	for _, p := range ws.Projects {
-		exists := "✓"
-		if _, err := os.Stat(p.Path); os.IsNotExist(err) {
-			exists = "✗ (path not found)"
+	report := buildWorkspaceStatusJSON(context.Background(), ws)
+	if workspaceStatusJSON {
+		data, err := encodeWorkspaceStatusJSON(report)
+		if err != nil {
+			return err
 		}
-		fmt.Printf("    - %s: %s %s\n", p.Name, p.Path, exists)
+		fmt.Println(string(data))
+		return nil
 	}
-
+	printWorkspaceStatusHuman(report)
 	return nil
 }
 

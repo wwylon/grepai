@@ -147,8 +147,9 @@ grepai workspace list
 # Show workspace details
 grepai workspace show my-fullstack
 
-# Check workspace status
+# Check workspace status (per-project documents, chunks, freshness)
 grepai workspace status my-fullstack
+grepai workspace status my-fullstack --json
 
 # Delete a workspace
 grepai workspace delete my-fullstack

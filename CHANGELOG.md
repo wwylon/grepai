@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Workspace status stats**: `grepai workspace status` reports per-project document/chunk counts, index size, and last update; `--json` for scripts
+
 ## [0.38.0] - 2026-10-24
 
 ### Added
