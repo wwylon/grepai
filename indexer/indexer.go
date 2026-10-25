@@ -258,6 +258,15 @@ func (idx *Indexer) decideFileScan(ctx context.Context, fileMeta FileMeta) (file
 		}
 	}
 
+	// Even when lastIndexTime is unset/stale, skip open+hash when the stored
+	// document ModTime still matches the filesystem (avoids IndexAll hash storms).
+	if doc != nil && len(doc.ChunkIDs) > 0 {
+		fileModTime := time.Unix(fileMeta.ModTime, 0)
+		if fileModTime.Equal(doc.ModTime) {
+			return fileScanDecision{countAsSkipped: true}, nil
+		}
+	}
+
 	// Load file content and hash only after metadata filtering.
 	file, err := idx.scanner.ScanFile(fileMeta.Path)
 	if err != nil {
@@ -330,10 +339,8 @@ func (idx *Indexer) prepareFileChunks(
 	for i := range files {
 		file := files[i]
 		g.Go(func() error {
-			if err := idx.store.DeleteByFile(gctx, file.Path); err != nil {
-				return fmt.Errorf("failed to delete existing chunks for %s: %w", file.Path, err)
-			}
-
+			// Do not DeleteByFile here — same-file ContentHash reuse needs old
+			// chunks to remain until after cache lookup (see indexFilesBatched).
 			embedContent, lineMap := idx.embeddingContent(gctx, file)
 			chunkInfos := idx.chunker.ChunkWithContext(file.Path, embedContent)
 			if len(chunkInfos) == 0 {
@@ -404,8 +411,11 @@ func createStoreChunks(chunkInfos []ChunkInfo, embeddings [][]float32, now time.
 	return chunks, chunkIDs
 }
 
-// saveFileData saves chunks and document metadata for a single file.
+// saveFileData replaces chunks and document metadata for a single file.
 func (idx *Indexer) saveFileData(ctx context.Context, fd fileChunkData, chunks []store.Chunk, chunkIDs []string) error {
+	if err := idx.store.DeleteByFile(ctx, fd.file.Path); err != nil {
+		return fmt.Errorf("failed to delete existing chunks for %s: %w", fd.file.Path, err)
+	}
 	if err := idx.store.SaveChunks(ctx, chunks); err != nil {
 		return fmt.Errorf("failed to save chunks for %s: %w", fd.file.Path, err)
 	}
@@ -460,11 +470,10 @@ func (idx *Indexer) indexFilesBatched(
 		return 0, 0, nil
 	}
 
-	// Check embedding cache for content-addressed deduplication
+	// ContentHash reuse (same-file first, then cross-file EmbeddingCache)
 	cache, hasCache := idx.store.(store.EmbeddingCache)
 	var totalCacheHits int
 
-	// Pre-fill cached embeddings and filter out fully-cached files
 	type preFilled struct {
 		fdIndex   int
 		vectors   [][]float32
@@ -476,39 +485,42 @@ func (idx *Indexer) indexFilesBatched(
 	var remainingFileChunks []embedder.FileChunks
 
 	for i, fd := range fileData {
-		if !hasCache {
-			remainingFileData = append(remainingFileData, fd)
-			remainingFileChunks = append(remainingFileChunks, fileChunks[i])
+		sameFile := idx.sameFileEmbeddingMap(ctx, fd.file.Path)
+		vecs := make([][]float32, len(fd.chunkInfos))
+		hits := 0
+
+		for j, chunk := range fd.chunkInfos {
+			if chunk.ContentHash == "" {
+				continue
+			}
+			if vec, ok := sameFile[chunk.ContentHash]; ok {
+				vecs[j] = vec
+				hits++
+				totalCacheHits++
+				continue
+			}
+			if hasCache {
+				vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash)
+				if err != nil {
+					log.Printf("Warning: cache lookup failed: %v", err)
+				} else if found {
+					vecs[j] = vec
+					hits++
+					totalCacheHits++
+				}
+			}
+		}
+
+		if len(fd.chunkInfos) > 0 && hits == len(fd.chunkInfos) {
+			preFilledFiles = append(preFilledFiles, preFilled{fdIndex: i, vectors: vecs, allCached: true})
 			continue
 		}
 
-		vecs := make([][]float32, len(fd.chunkInfos))
-		allCached := true
-		for j, chunk := range fd.chunkInfos {
-			if chunk.ContentHash == "" {
-				allCached = false
-				continue
-			}
-			vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash)
-			if err != nil {
-				log.Printf("Warning: cache lookup failed: %v", err)
-				allCached = false
-				continue
-			}
-			if found {
-				vecs[j] = vec
-				totalCacheHits++
-			} else {
-				allCached = false
-			}
-		}
-
-		if allCached {
-			preFilledFiles = append(preFilledFiles, preFilled{fdIndex: i, vectors: vecs, allCached: true})
-		} else {
-			remainingFileData = append(remainingFileData, fd)
-			remainingFileChunks = append(remainingFileChunks, fileChunks[i])
-		}
+		// Partial or zero hits: live IndexFile reuses per-chunk; batch path
+		// re-embeds the file (FormBatches alignment). Same-file map still
+		// enabled full-file skip above when nothing changed mid-batch.
+		remainingFileData = append(remainingFileData, fd)
+		remainingFileChunks = append(remainingFileChunks, fileChunks[i])
 	}
 
 	if totalCacheHits > 0 {
@@ -564,21 +576,23 @@ const maxReChunkAttempts = 3
 
 // IndexFile indexes a single file
 func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
-	// Remove existing chunks for this file
-	if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
-		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
-	}
-
 	embedContent, lineMap := idx.embeddingContent(ctx, file)
 
 	// Chunk the file
 	chunkInfos := idx.chunker.ChunkWithContext(file.Path, embedContent)
 	if len(chunkInfos) == 0 {
+		if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
+			return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
+		}
+		_ = idx.store.DeleteDocument(ctx, file.Path)
 		return 0, nil
 	}
 
+	// Same-file ContentHash map BEFORE delete so unchanged chunks reuse vectors.
+	sameFile := idx.sameFileEmbeddingMap(ctx, file.Path)
+
 	// Check embedding cache for content-addressed deduplication
-	cachedVectors, cacheHits := idx.lookupCachedEmbeddings(ctx, chunkInfos)
+	cachedVectors, cacheHits := idx.lookupCachedEmbeddings(ctx, chunkInfos, sameFile)
 	if cacheHits > 0 {
 		log.Printf("Reused %d cached embeddings for %s", cacheHits, file.Path)
 	}
@@ -667,6 +681,11 @@ func (idx *Indexer) IndexFile(ctx context.Context, file FileInfo) (int, error) {
 			UpdatedAt:   now,
 		}
 		chunkIDs[i] = info.ID
+	}
+
+	// Replace after embeddings are ready (delete-last preserves same-file cache).
+	if err := idx.store.DeleteByFile(ctx, file.Path); err != nil {
+		return 0, fmt.Errorf("failed to delete existing chunks: %w", err)
 	}
 
 	// Save chunks
@@ -794,23 +813,49 @@ func (idx *Indexer) remapChunksToSource(chunks []ChunkInfo, filePath, source str
 	}
 }
 
-// lookupCachedEmbeddings checks if the store implements EmbeddingCache and returns
-// cached vectors for chunks with matching content hashes. The returned map maps
-// chunk index to cached vector. Chunks not in the map need fresh embedding.
-func (idx *Indexer) lookupCachedEmbeddings(ctx context.Context, chunks []ChunkInfo) (map[int][]float32, int) {
-	cache, ok := idx.store.(store.EmbeddingCache)
-	if !ok {
-		return nil, 0
+// sameFileEmbeddingMap loads ContentHash → vector for chunks already stored for path.
+func (idx *Indexer) sameFileEmbeddingMap(ctx context.Context, path string) map[string][]float32 {
+	out := make(map[string][]float32)
+	chunks, err := idx.store.GetChunksForFile(ctx, path)
+	if err != nil || len(chunks) == 0 {
+		return out
 	}
+	for _, c := range chunks {
+		if c.ContentHash == "" || len(c.Vector) == 0 {
+			continue
+		}
+		out[c.ContentHash] = c.Vector
+	}
+	return out
+}
+
+// lookupCachedEmbeddings returns cached vectors keyed by chunk index.
+// sameFile (optional) is checked first so same-file reuse works before DeleteByFile.
+// Cross-file LookupByContentHash is used for remaining misses when the store supports it.
+func (idx *Indexer) lookupCachedEmbeddings(ctx context.Context, chunks []ChunkInfo, sameFile map[string][]float32) (map[int][]float32, int) {
+	cache, hasCache := idx.store.(store.EmbeddingCache)
 
 	cached := make(map[int][]float32)
 	for i, chunk := range chunks {
 		if chunk.ContentHash == "" {
 			continue
 		}
+		if sameFile != nil {
+			if vec, ok := sameFile[chunk.ContentHash]; ok {
+				cached[i] = vec
+				continue
+			}
+		}
+		if !hasCache {
+			continue
+		}
 		vec, found, err := cache.LookupByContentHash(ctx, chunk.ContentHash)
 		if err != nil {
-			log.Printf("Warning: cache lookup failed for content hash %s: %v", chunk.ContentHash[:8], err)
+			hashPrefix := chunk.ContentHash
+			if len(hashPrefix) > 8 {
+				hashPrefix = hashPrefix[:8]
+			}
+			log.Printf("Warning: cache lookup failed for content hash %s: %v", hashPrefix, err)
 			continue
 		}
 		if found {

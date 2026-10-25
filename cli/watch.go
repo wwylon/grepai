@@ -36,6 +36,8 @@ var (
 	watchLogDir     string
 	watchStatus     bool
 	watchStop       bool
+	watchFreeze     bool
+	watchUnfreeze   bool
 	watchWorkspace  string
 	watchNoUI       bool
 )
@@ -97,6 +99,8 @@ func init() {
 	watchCmd.Flags().StringVar(&watchLogDir, "log-dir", "", "Directory for log files (default: OS-specific)")
 	watchCmd.Flags().BoolVar(&watchStatus, "status", false, "Show background watcher status")
 	watchCmd.Flags().BoolVar(&watchStop, "stop", false, "Stop the background watcher")
+	watchCmd.Flags().BoolVar(&watchFreeze, "freeze", false, "Pause embedding (keep search); coalesce dirty paths until --unfreeze")
+	watchCmd.Flags().BoolVar(&watchUnfreeze, "unfreeze", false, "Resume embedding after --freeze")
 	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
 	watchCmd.Flags().BoolVar(&watchNoUI, "no-ui", false, "Disable interactive UI in foreground mode")
 }
@@ -113,8 +117,14 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	if watchStop {
 		activeFlags++
 	}
+	if watchFreeze {
+		activeFlags++
+	}
+	if watchUnfreeze {
+		activeFlags++
+	}
 	if activeFlags > 1 {
-		return fmt.Errorf("flags --background, --status, and --stop are mutually exclusive")
+		return fmt.Errorf("flags --background, --status, --stop, --freeze, and --unfreeze are mutually exclusive")
 	}
 
 	// Determine log directory
@@ -169,6 +179,25 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		if rootErr == nil {
 			_ = clearWatchLogDirHint(projectRoot)
 		}
+		return nil
+	}
+
+	if watchFreeze || watchUnfreeze {
+		projectRoot, err := config.FindProjectRoot()
+		if err != nil {
+			return fmt.Errorf("failed to find project root: %w", err)
+		}
+		if watchFreeze {
+			if err := writeWatchFreezeFile(projectRoot); err != nil {
+				return err
+			}
+			fmt.Println("Watch freeze requested (embeds pause; search stays on last index)")
+			return nil
+		}
+		if err := clearWatchFreezeFile(projectRoot); err != nil {
+			return err
+		}
+		fmt.Println("Watch unfrozen (embeds resume)")
 		return nil
 	}
 
@@ -433,6 +462,11 @@ func initializeEmbedder(ctx context.Context, cfg *config.Config) (embedder.Embed
 				return nil, fmt.Errorf("cannot connect to LM Studio: %w\nMake sure LM Studio is running with the %s model loaded", err, cfg.Embedder.Model)
 			}
 		}
+	}
+
+	// Tiny embed to warm local models (ignore failure — Ping already validated).
+	if err := embedder.Prewarm(ctx, emb); err != nil {
+		log.Printf("Warning: embedder prewarm skipped: %v", err)
 	}
 
 	return emb, nil
@@ -700,6 +734,8 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 
 	// Config write throttling - only write every 30 seconds at most
 	var lastConfigWrite time.Time
+	frozenQueue := newFrozenDirty(4096)
+	wasFrozen := isWatchFrozen(projectRoot)
 
 	// persistAndExit persists all stores before returning from the event loop.
 	persistAndExit := func() error {
@@ -734,8 +770,25 @@ func runWatchLoop(ctx context.Context, st store.VectorStore, symbolStore *trace.
 			if err := symbolStore.Persist(ctx); err != nil {
 				log.Printf("Warning: failed to persist symbol index: %v", err)
 			}
+			// Drain freeze queue when transitioning frozen → unfrozen.
+			frozenNow := isWatchFrozen(projectRoot)
+			if wasFrozen && !frozenNow {
+				paths, overflow := frozenQueue.takeAll()
+				log.Printf("Unfreeze: reindexing %d coalesced paths (overflow=%v)", len(paths), overflow)
+				for _, p := range paths {
+					ev := watcher.FileEvent{Type: watcher.EventModify, Path: p}
+					handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, ev, nil, nil, processors...)
+				}
+			}
+			wasFrozen = frozenNow
 
 		case event := <-w.Events():
+			if isWatchFrozen(projectRoot) {
+				frozenQueue.add(event.Path)
+				wasFrozen = true
+				log.Printf("Frozen: coalesced %s (dirty=%d)", event.Path, frozenQueue.len())
+				continue
+			}
 			handleFileEvent(ctx, idx, scanner, extractor, symbolStore, nil, nil, tracedLanguages, projectRoot, cfg, &lastConfigWrite, nil, event, nil, nil, processors...)
 
 		case err := <-w.Errors():
@@ -1218,6 +1271,10 @@ func watchProjectWithEventObserverAndFence(ctx context.Context, projectRoot stri
 	if err != nil {
 		abortStores = isFatalWatcherError(err)
 		return fmt.Errorf("failed to initialize watcher for %s: %w", projectRoot, err)
+	}
+	if cfg.Watch.DebounceAdaptive {
+		w.SetAdaptiveDebounce(true, cfg.Watch.DebounceMaxMs)
+		log.Printf("Adaptive debounce enabled (floor=%dms max=%dms)", cfg.Watch.DebounceMs, cfg.Watch.DebounceMaxMs)
 	}
 	abortWatcherClose := false
 	defer func() {
@@ -3116,6 +3173,9 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		}
 		return nil, nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
+	if projectCfg.Watch.DebounceAdaptive {
+		w.SetAdaptiveDebounce(true, projectCfg.Watch.DebounceMaxMs)
+	}
 	if err := w.Start(ctx); err != nil {
 		if isFatalWatcherError(err) {
 			w.Abort()
@@ -3288,4 +3348,13 @@ func (p *projectPrefixStore) GetChunksForFile(ctx context.Context, filePath stri
 
 func (p *projectPrefixStore) GetAllChunks(ctx context.Context) ([]store.Chunk, error) {
 	return p.store.GetAllChunks(ctx)
+}
+
+// LookupByContentHash forwards to the underlying store when it implements EmbeddingCache.
+func (p *projectPrefixStore) LookupByContentHash(ctx context.Context, contentHash string) ([]float32, bool, error) {
+	cache, ok := p.store.(store.EmbeddingCache)
+	if !ok {
+		return nil, false, nil
+	}
+	return cache.LookupByContentHash(ctx, contentHash)
 }

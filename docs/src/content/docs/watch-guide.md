@@ -149,12 +149,29 @@ Configure watcher behavior in `.grepai/config.yaml`:
 # Event debounce
 watch:
   debounce_ms: 500
+  # Agent save storms: grow quiet period up to debounce_max_ms
+  # debounce_adaptive: true
+  # debounce_max_ms: 5000
   rpg_derived_debounce_ms: 300
   rpg_persist_interval_ms: 1000
   rpg_full_reconcile_interval_sec: 300
   rpg_max_dirty_files_per_batch: 128
   # Auto-discover and watch linked git worktrees (default: true)
   discover_worktrees: true
+```
+
+Pause embeds without stopping search:
+
+```bash
+grepai watch --freeze
+# ... agent edit batch ...
+grepai watch --unfreeze
+```
+
+Or notify after edits:
+
+```bash
+grepai reindex --paths path/to/file.go
 ```
 
 To watch only the main worktree, set `discover_worktrees: false` in the **main worktree's** config — see [Git Worktrees](/grepai/git-worktrees/#disabling-worktree-discovery).

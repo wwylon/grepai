@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ollama/LM Studio BatchEmbedder**: IndexAll uses cross-file `EmbedBatches` (honors `embedder.parallelism`, default 1 for local GPUs) plus embedder prewarm on watch/reindex start
+- **Same-file ContentHash reuse**: `IndexFile` looks up existing chunks before delete so one-line edits re-embed only changed chunks
+- **Adaptive watch debounce**: `watch.debounce_adaptive` + `debounce_max_ms` grows the quiet period during save storms
+- **Watch freeze**: `grepai watch --freeze` / `--unfreeze` pauses embeds and coalesces dirty paths
+- **`grepai reindex --paths`**: agent-done notify reindex without restarting watch
+- **Workspace EmbeddingCache**: `projectPrefixStore` forwards `LookupByContentHash`
+
+### Changed
+
+- IndexAll decide path skips open+hash when stored document ModTime still matches the filesystem
+
 ## [0.38.0] - 2026-10-24
 
 ### Added

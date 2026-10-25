@@ -18,10 +18,11 @@ const (
 )
 
 type LMStudioEmbedder struct {
-	endpoint   string
-	model      string
-	dimensions int
-	client     *http.Client
+	endpoint    string
+	model       string
+	dimensions  int
+	parallelism int
+	client      *http.Client
 }
 
 type lmStudioEmbedRequest struct {
@@ -72,11 +73,19 @@ func WithLMStudioTimeout(d time.Duration) LMStudioOption {
 	}
 }
 
+// WithLMStudioParallelism sets concurrent EmbedBatches workers (default 1).
+func WithLMStudioParallelism(n int) LMStudioOption {
+	return func(e *LMStudioEmbedder) {
+		e.parallelism = n
+	}
+}
+
 func NewLMStudioEmbedder(opts ...LMStudioOption) *LMStudioEmbedder {
 	e := &LMStudioEmbedder{
-		endpoint:   defaultLMStudioEndpoint,
-		model:      defaultLMStudioModel,
-		dimensions: lmStudioNomicDimensions,
+		endpoint:    defaultLMStudioEndpoint,
+		model:       defaultLMStudioModel,
+		dimensions:  lmStudioNomicDimensions,
+		parallelism: defaultLMStudioParallelism,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},

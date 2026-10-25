@@ -67,8 +67,12 @@ chunking:
 
 # File watching configuration
 watch:
-  # Debounce delay in milliseconds
+  # Debounce delay in milliseconds (floor / fixed quiet period)
   debounce_ms: 500
+  # When debounce_adaptive is true, quiet period grows with continuous
+  # save storms up to debounce_max_ms (agent-friendly settle).
+  # debounce_max_ms: 5000
+  # debounce_adaptive: false
   # Auto-discover and watch linked git worktrees (default: true).
   # Only read from the main worktree's config.
   discover_worktrees: true

@@ -121,10 +121,33 @@ func (w *Watcher) debounceEvent(event FileEvent) {
 	if !exists || existing.Type != EventDelete || event.Type == EventDelete {
 		w.pending[event.Path] = event
 	}
+
+	now := time.Now()
+	effective := w.debounceMs
+	if w.adaptive {
+		maxMs := w.debounceMaxMs
+		if maxMs < w.debounceMs {
+			maxMs = w.debounceMs
+		}
+		if w.burstStart.IsZero() || (!w.lastEventAt.IsZero() && now.Sub(w.lastEventAt) > time.Duration(maxMs)*time.Millisecond) {
+			w.burstStart = now
+		}
+		grown := w.debounceMs + int(now.Sub(w.burstStart)/time.Millisecond)
+		if grown < w.debounceMs {
+			grown = w.debounceMs
+		}
+		if grown > maxMs {
+			grown = maxMs
+		}
+		effective = grown
+	}
+	w.lastEventAt = now
+	w.effectiveMs = effective
+
 	if w.timer != nil {
 		w.timer.Stop()
 	}
-	w.timer = time.AfterFunc(time.Duration(w.debounceMs)*time.Millisecond, w.flush)
+	w.timer = time.AfterFunc(time.Duration(effective)*time.Millisecond, w.flush)
 }
 
 func (w *Watcher) flush() {
@@ -137,6 +160,8 @@ func (w *Watcher) flush() {
 		events = append(events, event)
 	}
 	w.pending = make(map[string]FileEvent)
+	w.burstStart = time.Time{}
+	w.lastEventAt = time.Time{}
 	w.pendingMu.Unlock()
 
 	for _, event := range events {

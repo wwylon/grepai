@@ -195,8 +195,10 @@ func (m *mockStore) GetAllChunks(ctx context.Context) ([]store.Chunk, error) {
 
 // mockEmbedder implements embedder.Embedder for testing
 type mockEmbedder struct {
-	embedCalled bool
-	lastBatch   []string
+	embedCalled    bool
+	lastBatch      []string
+	batchCallCount int
+	textsEmbedded  int
 }
 
 func newMockEmbedder() *mockEmbedder {
@@ -210,10 +212,12 @@ func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float32, error
 
 func (m *mockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	m.embedCalled = true
+	m.batchCallCount++
+	m.textsEmbedded += len(texts)
 	m.lastBatch = append([]string(nil), texts...)
 	vectors := make([][]float32, len(texts))
 	for i := range texts {
-		vectors[i] = []float32{0.1, 0.2, 0.3}
+		vectors[i] = []float32{float32(i) * 0.01, 0.2, 0.3}
 	}
 	return vectors, nil
 }
@@ -827,9 +831,9 @@ func TestPrepareFileChunks(t *testing.T) {
 			}
 		}
 
-		// Verify DeleteByFile was called
-		if !mockStore.delByFileCalled {
-			t.Error("expected DeleteByFile to be called")
+		// DeleteByFile is deferred until save (ContentHash reuse); prepare only chunks.
+		if mockStore.delByFileCalled {
+			t.Error("prepareFileChunks must not DeleteByFile before cache lookup")
 		}
 	})
 
@@ -1257,5 +1261,55 @@ func TestIndexFile_UsesTransformedContentAndStoresSourceSnippet(t *testing.T) {
 	}
 	if chunks[0].StartLine != 2 {
 		t.Fatalf("expected remapped start line 2, got %d", chunks[0].StartLine)
+	}
+}
+
+func TestIndexFile_ReusesSameFileContentHashBeforeDelete(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockSt := newMockStore()
+	mockEmb := newMockEmbedder()
+	chunker := NewChunker(64, 8)
+	idx := NewIndexer(tmpDir, mockSt, mockEmb, chunker, nil, time.Time{})
+
+	// Two stable regions far apart so fixed chunking keeps one region unchanged.
+	partA := strings.Repeat("aaa_unchanged_region_line\n", 40)
+	partB := strings.Repeat("bbb_region_line\n", 40)
+	content1 := "package main\n\n" + partA + "\n" + partB
+	file := FileInfo{
+		Path:    "big.go",
+		Content: content1,
+		Hash:    "h1",
+		ModTime: time.Now().Unix(),
+	}
+	n1, err := idx.IndexFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("first IndexFile: %v", err)
+	}
+	if n1 < 2 {
+		t.Fatalf("expected multiple chunks, got %d", n1)
+	}
+	firstEmbeds := mockEmb.textsEmbedded
+	if firstEmbeds == 0 {
+		t.Fatal("expected first index to embed chunks")
+	}
+
+	// Edit only the trailing region.
+	partB2 := strings.Repeat("bbb_region_CHANGED\n", 40)
+	content2 := "package main\n\n" + partA + "\n" + partB2
+	file.Content = content2
+	file.Hash = "h2"
+	n2, err := idx.IndexFile(context.Background(), file)
+	if err != nil {
+		t.Fatalf("second IndexFile: %v", err)
+	}
+	if n2 == 0 {
+		t.Fatal("expected chunks on second index")
+	}
+	secondEmbeds := mockEmb.textsEmbedded - firstEmbeds
+	if secondEmbeds >= firstEmbeds {
+		t.Fatalf("expected fewer embeds on second IndexFile (reuse), first=%d second=%d", firstEmbeds, secondEmbeds)
+	}
+	if secondEmbeds == 0 {
+		t.Fatal("expected at least one chunk re-embedded after edit")
 	}
 }

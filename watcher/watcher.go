@@ -56,6 +56,14 @@ type Watcher struct {
 	// delivered after events from a newer one while the queue is full.
 	flushMu sync.Mutex
 	timer   *time.Timer
+
+	// Adaptive debounce (burst-length clamp): quiet period grows with burst age
+	// up to debounceMaxMs when adaptive is true.
+	adaptive      bool
+	debounceMaxMs int
+	burstStart    time.Time
+	lastEventAt   time.Time
+	effectiveMs   int // last timer duration used (for status)
 }
 
 func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Watcher, error) {
@@ -64,15 +72,19 @@ func NewWatcher(root string, ignore *indexer.IgnoreMatcher, debounceMs int) (*Wa
 		return nil, &RegistrationError{Operation: "create filesystem watcher", Path: root, Cause: err}
 	}
 
+	if debounceMs < 1 {
+		debounceMs = 500
+	}
 	w := &Watcher{
-		root:       root,
-		watcher:    fsw,
-		ignore:     ignore,
-		debounceMs: debounceMs,
-		events:     make(chan FileEvent, 100),
-		errors:     make(chan error, 1),
-		done:       make(chan struct{}),
-		pending:    make(map[string]FileEvent),
+		root:        root,
+		watcher:     fsw,
+		ignore:      ignore,
+		debounceMs:  debounceMs,
+		effectiveMs: debounceMs,
+		events:      make(chan FileEvent, 100),
+		errors:      make(chan error, 1),
+		done:        make(chan struct{}),
+		pending:     make(map[string]FileEvent),
 	}
 	w.addWatch = fsw.Add
 	w.statPath = os.Stat
@@ -98,6 +110,38 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 func (w *Watcher) Events() <-chan FileEvent {
 	return w.events
+}
+
+// SetAdaptiveDebounce enables burst-length clamp settle behavior.
+// Floor remains debounceMs; ceiling is maxMs (default 5000 when maxMs <= floor).
+func (w *Watcher) SetAdaptiveDebounce(enabled bool, maxMs int) {
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	w.adaptive = enabled
+	if maxMs <= w.debounceMs {
+		maxMs = w.debounceMs * 10
+		if maxMs < 5000 {
+			maxMs = 5000
+		}
+	}
+	w.debounceMaxMs = maxMs
+}
+
+// EffectiveDebounceMs returns the last debounce duration used (ms).
+func (w *Watcher) EffectiveDebounceMs() int {
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	if w.effectiveMs > 0 {
+		return w.effectiveMs
+	}
+	return w.debounceMs
+}
+
+// AdaptiveDebounce reports whether adaptive settle is enabled.
+func (w *Watcher) AdaptiveDebounce() bool {
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+	return w.adaptive
 }
 
 // Errors returns fatal errors that stop event processing.

@@ -19,10 +19,11 @@ const (
 )
 
 type OllamaEmbedder struct {
-	endpoint   string
-	model      string
-	dimensions int
-	client     *http.Client
+	endpoint    string
+	model       string
+	dimensions  int
+	parallelism int
+	client      *http.Client
 
 	// Once an endpoint rejects /api/embed, avoid probing it for every indexed file.
 	legacyBatchAPI atomic.Bool
@@ -66,13 +67,22 @@ func WithOllamaTimeout(d time.Duration) OllamaOption {
 	}
 }
 
+// WithOllamaParallelism sets concurrent EmbedBatches workers (default 1).
+func WithOllamaParallelism(n int) OllamaOption {
+	return func(e *OllamaEmbedder) {
+		e.parallelism = n
+	}
+}
+
 func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 	e := &OllamaEmbedder{
-		endpoint:   defaultOllamaEndpoint,
-		model:      defaultOllamaModel,
-		dimensions: nomicEmbedDimensions,
+		endpoint:    defaultOllamaEndpoint,
+		model:       defaultOllamaModel,
+		dimensions:  nomicEmbedDimensions,
+		parallelism: defaultOllamaParallelism,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			// Batch /api/embed of many chunks can exceed 60s on CPU hosts.
+			Timeout: 5 * time.Minute,
 		},
 	}
 

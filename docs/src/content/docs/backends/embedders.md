@@ -49,9 +49,14 @@ embedder:
   model: nomic-embed-text
   endpoint: http://localhost:11434
   dimensions: 768
+  # Cross-file IndexAll batch workers (default 1 for single-GPU hosts).
+  # Raise carefully; also see OLLAMA_NUM_PARALLEL on the Ollama server.
+  parallelism: 1
 ```
 
 During indexing, grepai sends multiple code chunks per request through Ollama's `/api/embed` endpoint. Servers that do not provide that endpoint automatically fall back to the legacy `/api/embeddings` API.
+
+Cold `IndexAll` also implements `BatchEmbedder` so chunks from many files can be grouped and embedded with the configured `parallelism` (same idea as OpenAI). Watch/reindex start with a tiny prewarm embed so the first real batch is not cold-start delayed.
 
 ### Available Models
 

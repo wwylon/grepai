@@ -12,8 +12,9 @@ import (
 )
 
 // ollamaBatchSize bounds request latency while still amortizing per-request overhead.
+// 32 keeps typical CPU/GPU hosts under the HTTP client timeout for /api/embed.
 const (
-	ollamaBatchSize        = 64
+	ollamaBatchSize        = 32
 	maxOllamaErrorBodySize = 64 << 10
 )
 

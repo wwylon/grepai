@@ -109,8 +109,8 @@ func TestOllamaEmbedder_EmbedBatch_splits_oversized_requests(t *testing.T) {
 	mutex.Lock()
 	gotSizes := append([]int(nil), requestSizes...)
 	mutex.Unlock()
-	if !reflect.DeepEqual(gotSizes, []int{64, 1}) {
-		t.Fatalf("request sizes = %v, want [64 1]", gotSizes)
+	if !reflect.DeepEqual(gotSizes, []int{32, 32, 1}) {
+		t.Fatalf("request sizes = %v, want [32 32 1]", gotSizes)
 	}
 	if len(embeddings) != len(texts) {
 		t.Fatalf("embedding count = %d, want %d", len(embeddings), len(texts))

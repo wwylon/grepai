@@ -7,6 +7,14 @@ description: Use grepai seamlessly across git worktrees
 
 grepai automatically detects [git worktrees](https://git-scm.com/docs/git-worktree) and provides zero-config setup for linked worktrees. If you work on multiple branches in parallel using `git worktree add`, grepai handles everything transparently.
 
+### Agent vs human modes
+
+| Host | Recommendation |
+|------|----------------|
+| Agents / many short clones | Session overlay + `discover_worktrees: false`; cold `--once --project` |
+| Humans with few long worktrees | Inherit seed index; watch the active tree only |
+| Avoid | Dual-indexing the same paths via discovery and overlay together |
+
 ### How It Works
 
 When you run any grepai command (`search`, `trace`, `watch`) from a **linked worktree**, grepai:

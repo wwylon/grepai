@@ -320,6 +320,8 @@ func (c *FrameworkFeatureConfig) UnmarshalYAML(value *yaml.Node) error {
 
 type WatchConfig struct {
 	DebounceMs                  int       `yaml:"debounce_ms"`
+	DebounceMaxMs               int       `yaml:"debounce_max_ms,omitempty"`
+	DebounceAdaptive            bool      `yaml:"debounce_adaptive,omitempty"`
 	LastIndexTime               time.Time `yaml:"last_index_time,omitempty"`
 	RPGPersistIntervalMs        int       `yaml:"rpg_persist_interval_ms,omitempty"`
 	RPGDerivedDebounceMs        int       `yaml:"rpg_derived_debounce_ms,omitempty"`
