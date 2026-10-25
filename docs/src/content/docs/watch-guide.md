@@ -363,6 +363,9 @@ grepai watch --workspace my-fullstack
 # One-shot index (scan + embed all members, then exit)
 grepai watch --workspace my-fullstack --once
 
+# One-shot index for selected projects only
+grepai watch --workspace my-fullstack --once --project frontend
+
 # Start workspace watcher (background)
 grepai watch --workspace my-fullstack --background
 

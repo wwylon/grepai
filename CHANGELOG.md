@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One-shot workspace index**: `grepai watch --workspace NAME --once` builds the
   initial workspace index (scan + embed for all members) and exits without leaving
   a daemon. Useful for CI and cold index then MCP/CLI search.
+- **One-shot project filter**: repeatable `--project NAME` with `--workspace --once`
+  limits the scan to selected workspace members
 
 ## [0.38.0] - 2026-10-24
 

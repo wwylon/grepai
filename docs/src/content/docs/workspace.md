@@ -98,6 +98,9 @@ grepai watch --workspace my-fullstack
 # One-shot index (build the index, then exit — no daemon)
 grepai watch --workspace my-fullstack --once
 
+# Refresh selected projects only
+grepai watch --workspace my-fullstack --once --project frontend --project api
+
 # Background mode
 grepai watch --workspace my-fullstack --background
 ```
@@ -175,6 +178,7 @@ grepai watch --workspace my-fullstack
 
 # One-shot index (no daemon; useful for CI / cold index)
 grepai watch --workspace my-fullstack --once
+grepai watch --workspace my-fullstack --once --project frontend
 
 # Start workspace watcher (background)
 grepai watch --workspace my-fullstack --background

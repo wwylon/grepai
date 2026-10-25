@@ -39,6 +39,7 @@ var (
 	watchWorkspace  string
 	watchNoUI       bool
 	watchOnce       bool
+	watchProjects   []string
 )
 
 // workspaceSkipLiveWatch skips fsnotify after the initial scan (watch --once).
@@ -85,6 +86,7 @@ Background mode:
 
 One-shot workspace index (no daemon):
   grepai watch --workspace NAME --once
+  grepai watch --workspace NAME --once --project frontend --project api
 
 Default log directories:
   Linux:   ~/.local/state/grepai/logs/grepai-watch.log (or $XDG_STATE_HOME)
@@ -107,6 +109,7 @@ func init() {
 	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
 	watchCmd.Flags().BoolVar(&watchNoUI, "no-ui", false, "Disable interactive UI in foreground mode")
 	watchCmd.Flags().BoolVar(&watchOnce, "once", false, "Index the workspace once and exit (no daemon; requires --workspace)")
+	watchCmd.Flags().StringArrayVar(&watchProjects, "project", nil, "Limit one-shot index to these workspace projects (repeatable; requires --workspace --once)")
 }
 
 func runWatch(cmd *cobra.Command, args []string) error {
@@ -129,6 +132,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	}
 	if watchOnce && watchWorkspace == "" {
 		return fmt.Errorf("--once requires --workspace")
+	}
+	if len(watchProjects) > 0 && !watchOnce {
+		return fmt.Errorf("--project requires --workspace --once")
 	}
 
 	// Determine log directory
@@ -2640,6 +2646,9 @@ func runWorkspaceWatch(logDir string) error {
 
 	ws, err := wsCfg.GetWorkspace(watchWorkspace)
 	if err != nil {
+		return err
+	}
+	if err := filterWorkspaceProjects(ws, watchProjects); err != nil {
 		return err
 	}
 
