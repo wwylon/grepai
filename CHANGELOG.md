@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows workspace index wipe on restart**: Scanner relative paths are normalized
+  to forward slashes so they match workspace store keys. Legacy single-project
+  indexes that still use backslash paths are removed as orphans on the next index
+  pass (no duplicate slash/backslash documents).
+
 ## [0.38.0] - 2026-10-24
 
 ### Added
