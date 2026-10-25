@@ -1393,6 +1393,8 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 		rpgManager = newRPGRealtimeManager(cfg.Watch.RPGMaxDirtyFilesPerBatch)
 		rpgWorker = startRPGRealtimeWorkers(ctx, mutationFence, projectRoot, symbolStore, rpgEncoder, rpgStore, cfg.Watch, rpgManager)
 	}
+	frozenQueue := newFrozenDirty(4096)
+	wasFrozen := isWatchFrozen(projectRoot)
 	persistAndShutdown := func() {
 		mutationFence.cleanup(ctx, func() {
 			<-rpgWorker.done
@@ -1430,8 +1432,37 @@ func runProjectWatchLoopWithFence(ctx context.Context, st store.VectorStore, sym
 				mutationFence.failWithCause(primary, w.Abort, onFatal)
 				return primary
 			}
+			frozenNow := isWatchFrozen(projectRoot)
+			if wasFrozen && !frozenNow {
+				paths, overflow := frozenQueue.takeAll()
+				log.Printf("Unfreeze: reindexing %d coalesced paths (overflow=%v) project=%s", len(paths), overflow, projectRoot)
+				for _, p := range paths {
+					ev := watcher.FileEvent{Type: watcher.EventModify, Path: p}
+					if err := mutationFence.handle(ctx, func(eventCtx context.Context) {
+						if onEvent != nil {
+							onEvent(projectRoot, ev)
+						}
+						handleFileEvent(eventCtx, idx, scanner, extractor, symbolStore, rpgEncoder, st, tracedLanguages, projectRoot, cfg, &lastConfigWrite, rpgManager, ev, onActivity, onStats, processors...)
+					}); err != nil {
+						if ctx.Err() != nil {
+							persistAndShutdown()
+							return nil
+						}
+						primary := fmt.Errorf("filesystem watcher failed during unfreeze for %s: %w", projectRoot, err)
+						mutationFence.failWithCause(primary, w.Abort, onFatal)
+						return primary
+					}
+				}
+			}
+			wasFrozen = frozenNow
 
 		case event := <-w.Events():
+			if isWatchFrozen(projectRoot) {
+				frozenQueue.add(event.Path)
+				wasFrozen = true
+				log.Printf("Frozen: coalesced %s (dirty=%d) project=%s", event.Path, frozenQueue.len(), projectRoot)
+				continue
+			}
 			if err := mutationFence.handle(ctx, func(eventCtx context.Context) {
 				if onEvent != nil {
 					onEvent(projectRoot, event)

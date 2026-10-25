@@ -36,9 +36,9 @@ func isWatchFrozen(projectRoot string) bool {
 
 // frozenDirty coalesces paths while embeds are frozen.
 type frozenDirty struct {
-	mu      sync.Mutex
-	paths   map[string]struct{}
-	capN    int
+	mu       sync.Mutex
+	paths    map[string]struct{}
+	capN     int
 	overflow bool
 }
 
