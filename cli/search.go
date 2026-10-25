@@ -553,6 +553,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 	if err != nil {
 		return err
 	}
+	ws = mergeWorkspaceOverlay(ws, searchWorkspace)
 
 	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathOpt, ws, projects)
 	if err != nil {
@@ -643,6 +644,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 		}
 		results = filteredResults
 	}
+	results = preferWorkspaceOverlay(results, ws)
 
 	// Workspace mode doesn't have RPG enrichment (no single projectRoot)
 	enrichments := make([]rpgEnrichment, len(results))

@@ -102,6 +102,19 @@ grepai watch
 
 This re-indexes only the files that differ from the copied seed index, keeping your worktree's index up to date.
 
+### Workspace overlay for a short-lived worktree
+
+Keep a durable multi-project workspace and attach one extra checkout for the current session:
+
+```bash
+grepai workspace overlay attach my-fullstack /path/to/my-project-feature --name feature --upstream frontend
+grepai watch --workspace my-fullstack
+grepai search --workspace my-fullstack --project feature "the change"
+grepai workspace overlay detach my-fullstack
+```
+
+Optional project `metadata.upstream` names the baseline project so search prefers overlay hits when relative paths collide.
+
 ### What Gets Copied
 
 | File | Purpose | Required |

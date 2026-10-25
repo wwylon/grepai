@@ -166,6 +166,11 @@ grepai workspace add my-fullstack /path/to/worktree --name feature --metadata up
 
 # Remove project from workspace
 grepai workspace remove my-fullstack project-name
+
+# Session overlay (temporary extra checkout / worktree)
+grepai workspace overlay attach my-fullstack /path/to/worktree --name feature --upstream frontend
+grepai workspace overlay show my-fullstack
+grepai workspace overlay detach my-fullstack
 ```
 
 ### Watch Commands

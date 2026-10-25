@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Optional project metadata**: workspace projects may include a `metadata` string map (`grepai workspace add --metadata key=value`, optional `--name`)
+- **Session overlay**: `grepai workspace overlay attach|detach|show` and MCP `grepai_overlay_attach` / `grepai_overlay_detach` for a temporary extra checkout; search prefers overlay hits when `metadata.upstream` names a baseline project
 
 ## [0.38.0] - 2026-10-24
 

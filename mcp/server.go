@@ -434,6 +434,21 @@ func (s *Server) registerTools() {
 	)
 	s.mcpServer.AddTool(rpgExploreTool, s.handleRPGExplore)
 
+	overlayAttachTool := mcp.NewTool("grepai_overlay_attach",
+		mcp.WithDescription("Attach one session overlay project path to a workspace (git worktree / extra checkout)."),
+		mcp.WithString("workspace", mcp.Description("Workspace name (optional if the server was started with --workspace)")),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Absolute directory path to attach")),
+		mcp.WithString("name", mcp.Description("Overlay project name (default: overlay)")),
+		mcp.WithString("upstream", mcp.Description("Baseline project name for relative-path preference")),
+	)
+	s.mcpServer.AddTool(overlayAttachTool, s.handleOverlayAttach)
+
+	overlayDetachTool := mcp.NewTool("grepai_overlay_detach",
+		mcp.WithDescription("Detach the session overlay from a workspace."),
+		mcp.WithString("workspace", mcp.Description("Workspace name (optional if the server was started with --workspace)")),
+	)
+	s.mcpServer.AddTool(overlayDetachTool, s.handleOverlayDetach)
+
 	// grepai_stats tool
 	statsTool := mcp.NewTool("grepai_stats",
 		mcp.WithDescription("Show token savings summary achieved by using grepai instead of grep-based workflows. Returns aggregated metrics from local stats."),
@@ -612,6 +627,7 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("workspace not found: %v", err)), nil
 	}
+	ws = mergeMCPOverlay(ws, workspaceName)
 
 	projectNames := parseProjectNames(projectsStr)
 	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathPrefix, ws, projectNames)
@@ -710,6 +726,7 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 		}
 		results = filteredResults
 	}
+	results = preferMCPOverlay(results, ws)
 
 	if normalizedPath != "" && len(results) == 0 {
 		selected := resolvedProjects

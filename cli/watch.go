@@ -2628,6 +2628,10 @@ func runWorkspaceWatch(logDir string) error {
 	if err != nil {
 		return err
 	}
+	if overlayCfg, overlayErr := config.LoadOverlayConfig(); overlayErr == nil {
+		entry, ok := overlayCfg.Get(watchWorkspace)
+		ws = config.MergeOverlay(ws, entry, ok)
+	}
 
 	// Validate backend (GOB not supported for workspaces)
 	if err := config.ValidateWorkspaceBackend(ws); err != nil {
