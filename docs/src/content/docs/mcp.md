@@ -26,10 +26,10 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `grepai_search` | Semantic code search | `query` (required), `limit` (default: 10), `compact` (default: false), `root` |
-| `grepai_trace_callers` | Find callers of a symbol | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false) |
-| `grepai_trace_callees` | Find callees of a symbol | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false) |
-| `grepai_trace_graph` | Build complete call graph | `symbol` (required), `workspace`, `project`, `root`, `depth` (default: 2) |
+| `grepai_search` | Semantic code search | `query` (required), `limit` (default: 10), `compact` (default: false), `workspace`, `projects`, `path`, `actor`, `root` |
+| `grepai_trace_callers` | Find callers of a symbol | `symbol` (required), `workspace`, `project`, `actor`, `root`, `compact` (default: false) |
+| `grepai_trace_callees` | Find callees of a symbol | `symbol` (required), `workspace`, `project`, `actor`, `root`, `compact` (default: false) |
+| `grepai_trace_graph` | Build complete call graph | `symbol` (required), `workspace`, `project`, `actor`, `root`, `depth` (default: 2) |
 | `grepai_refs_readers` | Find property/state readers | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false), `format` (`json` or `toon`) |
 | `grepai_refs_writers` | Find property/state writers | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false), `format` (`json` or `toon`) |
 | `grepai_refs_graph` | Build property usage graph | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false), `format` (`json` or `toon`) |
@@ -39,8 +39,20 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 | `grepai_index_status` | Check index health | `verbose` (optional, default: false), `workspace`, `root` |
 | `grepai_list_workspaces` | List available workspace names | `format` (optional: `json` or `toon`) |
 | `grepai_list_projects` | List projects for a workspace | `workspace` (required), `format` (optional: `json` or `toon`) |
+| `grepai_stats` | Token savings + recent who/what events | `history` (default: false), `limit` (history days), `recent` (default: true), `recent_limit` (default: 50) |
 
 The project-scoped tools (`grepai_search`, `grepai_trace_*`, `grepai_refs_*`, `grepai_index_status`) also accept an optional `root` parameter: an absolute project directory to load the configuration and index from, overriding the project the server was started in. This supports per-launch project detection — an MCP client that spans multiple projects can point each request at the directory it is currently working in, without restarting `mcp-serve`. `root` cannot be combined with `workspace`.
+
+### Usage stats (who / what)
+
+Search and trace tools append events to `~/.grepai/stats.json` (shared across projects). Each event stores:
+
+- **source**: `mcp` or `cli`
+- **actor**: MCP `actor` argument, else `GREPAI_STATS_ACTOR`, else the OS username
+- **query**: the search query or traced symbol
+- **workspace** / **projects** / **path** when provided
+
+Pass `actor` on each tool call (or set `GREPAI_STATS_ACTOR` in the MCP server environment) so multi-agent setups can tell sessions apart. Inspect with `grepai_stats` (`recent` defaults to true) or `grepai stats --recent 30 --json --no-ui`.
 
 ## Configuration
 
@@ -172,14 +184,21 @@ Once configured, AI agents can use grepai tools directly:
 
 ```text
 Tool: grepai_search
-Arguments: {"query": "user authentication flow", "limit": 5}
+Arguments: {"query": "user authentication flow", "limit": 5, "actor": "agent-session"}
 ```
 
 **Trace callers example:**
 
 ```text
 Tool: grepai_trace_callers
-Arguments: {"symbol": "HandleLogin"}
+Arguments: {"symbol": "HandleLogin", "actor": "agent-session"}
+```
+
+**Stats example:**
+
+```text
+Tool: grepai_stats
+Arguments: {"recent": true, "recent_limit": 20}
 ```
 
 **RPG search example:**

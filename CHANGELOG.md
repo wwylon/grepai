@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Usage events include who and what**: each search/trace records source (`cli`/`mcp`), actor (`GREPAI_STATS_ACTOR`, MCP `actor`, or OS user), query text, workspace, and projects into shared `~/.grepai/stats.json`. `grepai stats --recent N` and MCP `grepai_stats` (`recent` default true) list them
+
 ## [0.38.0] - 2026-10-24
 
 ### Added

@@ -127,7 +127,7 @@ func encodeOutput(data any, format string) (string, error) {
 func NewServer(projectRoot string) (*Server, error) {
 	s := &Server{
 		projectRoot: projectRoot,
-		recorder:    stats.NewRecorder(projectRoot),
+		recorder:    stats.NewUserRecorder(projectRoot),
 	}
 
 	// Create MCP server
@@ -149,7 +149,7 @@ func NewServerWithWorkspace(projectRoot, workspaceName string) (*Server, error) 
 	s := &Server{
 		projectRoot:   projectRoot,
 		workspaceName: workspaceName,
-		recorder:      stats.NewRecorder(projectRoot),
+		recorder:      stats.NewUserRecorder(projectRoot),
 	}
 
 	s.mcpServer = server.NewMCPServer(
@@ -200,6 +200,9 @@ func (s *Server) registerTools() {
 		mcp.WithString("projects",
 			mcp.Description("Comma-separated list of project names to search within workspace (requires workspace)"),
 		),
+		mcp.WithString("actor",
+			mcp.Description("Optional usage-stats label (agent or session name). Overrides GREPAI_STATS_ACTOR / OS user."),
+		),
 		rootToolOption(),
 	)
 	s.mcpServer.AddTool(searchTool, s.handleSearch)
@@ -222,6 +225,9 @@ func (s *Server) registerTools() {
 		),
 		mcp.WithString("project",
 			mcp.Description("Project name within workspace (requires workspace)"),
+		),
+		mcp.WithString("actor",
+			mcp.Description("Optional usage-stats label (agent or session name). Overrides GREPAI_STATS_ACTOR / OS user."),
 		),
 		rootToolOption(),
 	)
@@ -246,6 +252,9 @@ func (s *Server) registerTools() {
 		mcp.WithString("project",
 			mcp.Description("Project name within workspace (requires workspace)"),
 		),
+		mcp.WithString("actor",
+			mcp.Description("Optional usage-stats label (agent or session name). Overrides GREPAI_STATS_ACTOR / OS user."),
+		),
 		rootToolOption(),
 	)
 	s.mcpServer.AddTool(traceCalleesTool, s.handleTraceCallees)
@@ -268,6 +277,9 @@ func (s *Server) registerTools() {
 		),
 		mcp.WithString("project",
 			mcp.Description("Project name within workspace (requires workspace)"),
+		),
+		mcp.WithString("actor",
+			mcp.Description("Optional usage-stats label (agent or session name). Overrides GREPAI_STATS_ACTOR / OS user."),
 		),
 		rootToolOption(),
 	)
@@ -443,6 +455,12 @@ func (s *Server) registerTools() {
 		mcp.WithNumber("limit",
 			mcp.Description("Max days in history (default: 30, only used when history=true)"),
 		),
+		mcp.WithBoolean("recent",
+			mcp.Description("Include recent per-query events (who/what) (default: true)"),
+		),
+		mcp.WithNumber("recent_limit",
+			mcp.Description("Max recent events when recent=true (default: 50)"),
+		),
 	)
 	s.mcpServer.AddTool(statsTool, s.handleStats)
 }
@@ -477,7 +495,7 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 
 	// Workspace mode
 	if workspace != "" {
-		return s.handleWorkspaceSearch(ctx, query, limit, compact, format, path, workspace, projects)
+		return s.handleWorkspaceSearch(ctx, query, limit, compact, format, path, workspace, projects, request)
 	}
 
 	// Single-project mode (with possible root override)
@@ -593,12 +611,20 @@ func (s *Server) handleSearch(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
-	s.recordMCPStats(stats.Search, mcpOutputMode(compact, format), len(results), output)
+	s.recordMCPStats(request, stats.Entry{
+		CommandType: stats.Search,
+		OutputMode:  mcpOutputMode(compact, format),
+		ResultCount: len(results),
+		Query:       query,
+		Workspace:   workspace,
+		Projects:    projects,
+		Path:        path,
+	}, output)
 	return mcp.NewToolResultText(output), nil
 }
 
 // handleWorkspaceSearch handles workspace-level search via MCP.
-func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit int, compact bool, format, pathPrefix, workspaceName, projectsStr string) (*mcp.CallToolResult, error) {
+func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit int, compact bool, format, pathPrefix, workspaceName, projectsStr string, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Load workspace config
 	wsCfg, err := config.LoadWorkspaceConfig()
 	if err != nil {
@@ -765,6 +791,15 @@ func (s *Server) handleWorkspaceSearch(ctx context.Context, query string, limit 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode results: %v", err)), nil
 	}
 
+	s.recordMCPStats(request, stats.Entry{
+		CommandType: stats.Search,
+		OutputMode:  mcpOutputMode(compact, format),
+		ResultCount: len(results),
+		Query:       query,
+		Workspace:   workspaceName,
+		Projects:    projectsStr,
+		Path:        pathPrefix,
+	}, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1116,7 +1151,7 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		return s.handleTraceCallersFromStores(ctx, symbolName, compact, format, stores)
+		return s.handleTraceCallersFromStores(ctx, request, symbolName, compact, format, workspace, project, stores)
 	}
 
 	// Single-project mode (allow explicit root override)
@@ -1136,11 +1171,11 @@ func (s *Server) handleTraceCallers(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
 	}
 
-	return s.handleTraceCallersFromStores(ctx, symbolName, compact, format, []trace.SymbolStore{symbolStore})
+	return s.handleTraceCallersFromStores(ctx, request, symbolName, compact, format, workspace, project, []trace.SymbolStore{symbolStore})
 }
 
 // handleTraceCallersFromStores handles callers lookup across one or more symbol stores.
-func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
+func (s *Server) handleTraceCallersFromStores(ctx context.Context, request mcp.CallToolRequest, symbolName string, compact bool, format, workspace, project string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	// Aggregate results across stores
 	var firstSymbol *trace.Symbol
 	var allRefs []trace.Reference
@@ -1266,7 +1301,14 @@ func (s *Server) handleTraceCallersFromStores(ctx context.Context, symbolName st
 	if tr, ok := data.(trace.TraceResult); ok {
 		resultCount = len(tr.Callers)
 	}
-	s.recordMCPStats(stats.TraceCallers, mcpOutputMode(compact, format), resultCount, output)
+	s.recordMCPStats(request, stats.Entry{
+		CommandType: stats.TraceCallers,
+		OutputMode:  mcpOutputMode(compact, format),
+		ResultCount: resultCount,
+		Query:       symbolName,
+		Workspace:   workspace,
+		Projects:    project,
+	}, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1299,7 +1341,7 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 		}
 		defer trace.CloseSymbolStores(stores)
 
-		return s.handleTraceCalleesFromStores(ctx, symbolName, compact, format, stores)
+		return s.handleTraceCalleesFromStores(ctx, request, symbolName, compact, format, workspace, project, stores)
 	}
 
 	// Single-project mode (allow explicit root override)
@@ -1319,11 +1361,11 @@ func (s *Server) handleTraceCallees(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError("symbol index is empty. Run 'grepai watch' first to build the index"), nil
 	}
 
-	return s.handleTraceCalleesFromStores(ctx, symbolName, compact, format, []trace.SymbolStore{symbolStore})
+	return s.handleTraceCalleesFromStores(ctx, request, symbolName, compact, format, workspace, project, []trace.SymbolStore{symbolStore})
 }
 
 // handleTraceCalleesFromStores handles callees lookup across one or more symbol stores.
-func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName string, compact bool, format string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
+func (s *Server) handleTraceCalleesFromStores(ctx context.Context, request mcp.CallToolRequest, symbolName string, compact bool, format, workspace, project string, stores []trace.SymbolStore) (*mcp.CallToolResult, error) {
 	var firstSymbol *trace.Symbol
 	var allRefs []trace.Reference
 
@@ -1450,7 +1492,14 @@ func (s *Server) handleTraceCalleesFromStores(ctx context.Context, symbolName st
 	if tr, ok := data.(trace.TraceResult); ok {
 		resultCount = len(tr.Callees)
 	}
-	s.recordMCPStats(stats.TraceCallees, mcpOutputMode(compact, format), resultCount, output)
+	s.recordMCPStats(request, stats.Entry{
+		CommandType: stats.TraceCallees,
+		OutputMode:  mcpOutputMode(compact, format),
+		ResultCount: resultCount,
+		Query:       symbolName,
+		Workspace:   workspace,
+		Projects:    project,
+	}, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -1583,7 +1632,14 @@ func (s *Server) handleTraceGraph(ctx context.Context, request mcp.CallToolReque
 	if result.Graph != nil {
 		nodeCount = len(result.Graph.Nodes)
 	}
-	s.recordMCPStats(stats.TraceGraph, mcpOutputMode(false, format), nodeCount, output)
+	s.recordMCPStats(request, stats.Entry{
+		CommandType: stats.TraceGraph,
+		OutputMode:  mcpOutputMode(false, format),
+		ResultCount: nodeCount,
+		Query:       symbolName,
+		Workspace:   workspace,
+		Projects:    project,
+	}, output)
 	return mcp.NewToolResultText(output), nil
 }
 
@@ -2522,23 +2578,29 @@ func mcpOutputMode(compact bool, format string) stats.OutputMode {
 	return stats.Full
 }
 
-// recordMCPStats fires a goroutine to record a stats entry without blocking.
-func (s *Server) recordMCPStats(commandType, outputMode string, resultCount int, outputStr string) {
+// recordMCPStats appends a usage event (query + actor + source=mcp).
+func (s *Server) recordMCPStats(request mcp.CallToolRequest, e stats.Entry, outputStr string) {
 	if s.recorder == nil {
 		return
 	}
-	entry := stats.Entry{
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		CommandType:  commandType,
-		OutputMode:   outputMode,
-		ResultCount:  resultCount,
-		OutputTokens: embedder.EstimateTokens(outputStr),
-		GrepTokens:   stats.GrepEquivalentTokens(resultCount),
+	if e.Timestamp == "" {
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
+	e.OutputTokens = embedder.EstimateTokens(outputStr)
+	if e.GrepTokens == 0 {
+		e.GrepTokens = stats.GrepEquivalentTokens(e.ResultCount)
+	}
+	if e.Actor == "" {
+		e.Actor = request.GetString("actor", "")
+	}
+	if e.Workspace == "" {
+		e.Workspace = s.workspaceName
+	}
+	stats.FillIdentity(&e, stats.SourceMCP)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = s.recorder.Record(ctx, entry)
+		_ = s.recorder.Record(ctx, e)
 	}()
 }
 
@@ -2548,6 +2610,9 @@ func (s *Server) handleStats(ctx context.Context, request mcp.CallToolRequest) (
 	limit := request.GetInt("limit", 30)
 
 	statsFilePath := stats.StatsPath(s.projectRoot)
+	if userPath, err := stats.UserStatsPath(); err == nil {
+		statsFilePath = userPath
+	}
 	entries, readErr := stats.ReadAll(statsFilePath)
 	if readErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to read stats: %v", readErr)), nil
@@ -2559,29 +2624,29 @@ func (s *Server) handleStats(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	summary := stats.Summarize(entries, provider)
-
-	if !includeHistory {
-		output, encErr := encodeOutput(summary, "json")
-		if encErr != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to encode stats: %v", encErr)), nil
-		}
-		return mcp.NewToolResultText(output), nil
+	recentLimit := request.GetInt("recent_limit", 50)
+	if recentLimit <= 0 {
+		recentLimit = 50
 	}
-
-	days := stats.HistoryByDay(entries)
-	if limit > 0 && len(days) > limit {
-		days = days[:limit]
-	}
-
-	histResult := struct {
+	includeRecent := request.GetBool("recent", true)
+	payload := struct {
 		Summary stats.Summary      `json:"summary"`
-		History []stats.DaySummary `json:"history"`
+		History []stats.DaySummary `json:"history,omitempty"`
+		Recent  []stats.Entry      `json:"recent,omitempty"`
 	}{
 		Summary: summary,
-		History: days,
 	}
-
-	output, encErr := encodeOutput(histResult, "json")
+	if includeHistory {
+		days := stats.HistoryByDay(entries)
+		if limit > 0 && len(days) > limit {
+			days = days[:limit]
+		}
+		payload.History = days
+	}
+	if includeRecent {
+		payload.Recent = stats.RecentEntries(entries, recentLimit)
+	}
+	output, encErr := encodeOutput(payload, "json")
 	if encErr != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode stats: %v", encErr)), nil
 	}
