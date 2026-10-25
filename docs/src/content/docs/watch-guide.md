@@ -360,6 +360,9 @@ For multi-project setups, the watcher can index all projects in a workspace usin
 # Start workspace watcher (foreground)
 grepai watch --workspace my-fullstack
 
+# One-shot index (scan + embed all members, then exit)
+grepai watch --workspace my-fullstack --once
+
 # Start workspace watcher (background)
 grepai watch --workspace my-fullstack --background
 

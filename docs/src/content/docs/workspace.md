@@ -95,6 +95,9 @@ grepai workspace add my-fullstack /path/to/shared-lib
 # Foreground mode
 grepai watch --workspace my-fullstack
 
+# One-shot index (build the index, then exit — no daemon)
+grepai watch --workspace my-fullstack --once
+
 # Background mode
 grepai watch --workspace my-fullstack --background
 ```
@@ -169,6 +172,9 @@ grepai workspace remove my-fullstack project-name
 ```bash
 # Start workspace watcher (foreground)
 grepai watch --workspace my-fullstack
+
+# One-shot index (no daemon; useful for CI / cold index)
+grepai watch --workspace my-fullstack --once
 
 # Start workspace watcher (background)
 grepai watch --workspace my-fullstack --background

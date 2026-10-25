@@ -139,7 +139,9 @@ func initializeWorkspaceRuntimes(ctx context.Context, ws *config.Workspace, emb 
 			continue
 		}
 		runtimes[canonicalPath(project.Path)] = runtime
-		watchers = append(watchers, w)
+		if w != nil {
+			watchers = append(watchers, w)
+		}
 	}
 	return runtimes, watchers, nil
 }
