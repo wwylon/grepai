@@ -39,6 +39,7 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 | `grepai_index_status` | Check index health | `verbose` (optional, default: false), `workspace`, `root` |
 | `grepai_list_workspaces` | List available workspace names | `format` (optional: `json` or `toon`) |
 | `grepai_list_projects` | List projects for a workspace | `workspace` (required), `format` (optional: `json` or `toon`) |
+| `grepai_grep` | Exact/regex search on disk (no embedder) | `pattern` (required), `workspace`, `projects`, `regex`, `format` |
 
 The project-scoped tools (`grepai_search`, `grepai_trace_*`, `grepai_refs_*`, `grepai_index_status`) also accept an optional `root` parameter: an absolute project directory to load the configuration and index from, overriding the project the server was started in. This supports per-launch project detection — an MCP client that spans multiple projects can point each request at the directory it is currently working in, without restarting `mcp-serve`. `root` cannot be combined with `workspace`.
 

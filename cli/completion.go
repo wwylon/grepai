@@ -157,6 +157,8 @@ func registerCompletions() {
 		return completeProjectNames(wsName), cobra.ShellCompDirectiveNoFileComp
 	}
 	_ = searchCmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	_ = grepCmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
+	_ = grepCmd.RegisterFlagCompletionFunc("project", projectCompleter)
 	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd, refsGraphCmd} {
 		_ = cmd.RegisterFlagCompletionFunc("project", projectCompleter)
 	}

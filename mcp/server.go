@@ -434,6 +434,16 @@ func (s *Server) registerTools() {
 	)
 	s.mcpServer.AddTool(rpgExploreTool, s.handleRPGExplore)
 
+	grepTool := mcp.NewTool("grepai_grep",
+		mcp.WithDescription("Exact or regex search across workspace project roots on disk. Does not call the embedder. Complements grepai_search."),
+		mcp.WithString("pattern", mcp.Required(), mcp.Description("Literal string or regex to find")),
+		mcp.WithString("workspace", mcp.Description("Workspace name (optional if the server was started with --workspace)")),
+		mcp.WithString("projects", mcp.Description("Comma-separated project names (optional)")),
+		mcp.WithBoolean("regex", mcp.Description("Treat pattern as a regular expression (default: false)")),
+		mcp.WithString("format", mcp.Description("Output format: 'json' (default) or 'toon'")),
+	)
+	s.mcpServer.AddTool(grepTool, s.handleGrep)
+
 	// grepai_stats tool
 	statsTool := mcp.NewTool("grepai_stats",
 		mcp.WithDescription("Show token savings summary achieved by using grepai instead of grep-based workflows. Returns aggregated metrics from local stats."),
@@ -2508,6 +2518,59 @@ func (s *Server) handleRPGExplore(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultError(fmt.Sprintf("failed to encode result: %v", err)), nil
 	}
 
+	return mcp.NewToolResultText(output), nil
+}
+
+func (s *Server) handleGrep(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pattern, err := request.RequireString("pattern")
+	if err != nil {
+		return mcp.NewToolResultError("pattern is required"), nil
+	}
+	wsName := request.GetString("workspace", "")
+	if wsName == "" {
+		wsName = s.workspaceName
+	}
+	if wsName == "" {
+		return mcp.NewToolResultError("workspace is required"), nil
+	}
+	wsCfg, err := config.LoadWorkspaceConfig()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	ws, err := wsCfg.GetWorkspace(wsName)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	projects := parseProjectNames(request.GetString("projects", ""))
+	if len(projects) > 0 {
+		selected := make([]config.ProjectEntry, 0, len(projects))
+		byName := map[string]config.ProjectEntry{}
+		for _, p := range ws.Projects {
+			byName[p.Name] = p
+		}
+		for _, name := range projects {
+			p, ok := byName[name]
+			if !ok {
+				return mcp.NewToolResultError(fmt.Sprintf("unknown project %q", name)), nil
+			}
+			selected = append(selected, p)
+		}
+		ws.Projects = selected
+	}
+	roots := make([]search.ExactRoot, 0, len(ws.Projects))
+	for _, p := range ws.Projects {
+		roots = append(roots, search.ExactRoot{Name: p.Name, Path: p.Path})
+	}
+	hits, err := search.GrepRoots(pattern, roots, request.GetBool("regex", false))
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	format := request.GetString("format", "json")
+	output, err := encodeOutput(hits, format)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	s.recordMCPStats(stats.Grep, stats.Full, len(hits), output)
 	return mcp.NewToolResultText(output), nil
 }
 

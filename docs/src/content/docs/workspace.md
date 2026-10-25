@@ -107,6 +107,9 @@ grepai search --workspace my-fullstack "authentication flow"
 
 # Search specific project only
 grepai search --workspace my-fullstack --project frontend "React components"
+
+# Exact text across the same workspace roots (no embeddings)
+grepai grep AuthToken --workspace my-fullstack --project frontend
 ```
 
 ## Configuration File

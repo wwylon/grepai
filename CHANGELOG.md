@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Exact workspace grep**: `grepai grep` and MCP `grepai_grep` search on-disk project roots (ripgrep when available) without calling the embedder
+
 ## [0.38.0] - 2026-10-24
 
 ### Added

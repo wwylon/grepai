@@ -10,6 +10,7 @@ const (
 	TraceCallers CommandType = "trace-callers"
 	TraceCallees CommandType = "trace-callees"
 	TraceGraph   CommandType = "trace-graph"
+	Grep         CommandType = "grep"
 )
 
 // OutputMode represents the output format used for the command result.
