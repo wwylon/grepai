@@ -8,7 +8,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -18,10 +21,11 @@ const (
 )
 
 type OllamaEmbedder struct {
-	endpoint   string
-	model      string
-	dimensions int
-	client     *http.Client
+	endpoint    string
+	model       string
+	dimensions  int
+	parallelism int
+	client      *http.Client
 }
 
 type ollamaEmbedRequest struct {
@@ -62,13 +66,30 @@ func WithOllamaTimeout(d time.Duration) OllamaOption {
 	}
 }
 
+func WithOllamaParallelism(n int) OllamaOption {
+	return func(e *OllamaEmbedder) {
+		if n > 0 {
+			e.parallelism = n
+		}
+	}
+}
+
 func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 	e := &OllamaEmbedder{
-		endpoint:   defaultOllamaEndpoint,
-		model:      defaultOllamaModel,
-		dimensions: nomicEmbedDimensions,
+		endpoint:    defaultOllamaEndpoint,
+		model:       defaultOllamaModel,
+		dimensions:  nomicEmbedDimensions,
+		parallelism: 1,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
+				MaxIdleConns:        64,
+				MaxIdleConnsPerHost: 64,
+				MaxConnsPerHost:     64,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   true,
+			},
 		},
 	}
 
@@ -154,6 +175,49 @@ func (e *OllamaEmbedder) Dimensions() int {
 
 func (e *OllamaEmbedder) Close() error {
 	return nil
+}
+
+// EmbedBatches implements BatchEmbedder. Ollama embeddings are requested
+// concurrently up to embedder.parallelism (1 preserves sequential behavior).
+func (e *OllamaEmbedder) EmbedBatches(ctx context.Context, batches []Batch, progress BatchProgress) ([]BatchResult, error) {
+	if len(batches) == 0 {
+		return nil, nil
+	}
+	totalChunks := 0
+	for _, batch := range batches {
+		totalChunks += batch.Size()
+	}
+	var completedChunks atomic.Int64
+	results := make([]BatchResult, len(batches))
+	g, ctx := errgroup.WithContext(ctx)
+	limit := e.parallelism
+	if limit < 1 {
+		limit = 1
+	}
+	g.SetLimit(limit)
+
+	for i := range batches {
+		batch := batches[i]
+		g.Go(func() error {
+			embeddings, err := e.EmbedBatch(ctx, batch.Contents())
+			if err != nil {
+				return err
+			}
+			n := int(completedChunks.Add(int64(batch.Size())))
+			if progress != nil {
+				progress(batch.Index, len(batches), n, totalChunks, false, 0, 0)
+			}
+			results[batch.Index] = BatchResult{
+				BatchIndex: batch.Index,
+				Embeddings: embeddings,
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // Ping checks if Ollama is reachable

@@ -38,7 +38,12 @@ var (
 	watchStop       bool
 	watchWorkspace  string
 	watchNoUI       bool
+	watchOnce       bool
+	watchProjects   []string
 )
+
+// workspaceSkipLiveWatch skips fsnotify after the initial scan (watch --once).
+var workspaceSkipLiveWatch bool
 
 var (
 	watchIsInteractiveTerminal = isInteractiveTerminal
@@ -79,6 +84,10 @@ Background mode:
   grepai watch --status                  Check if background watcher is running
   grepai watch --stop                    Stop the background watcher
 
+One-shot workspace index (no daemon):
+  grepai watch --workspace NAME --once
+  grepai watch --workspace NAME --once --project frontend --project api
+
 Default log directories:
   Linux:   ~/.local/state/grepai/logs/grepai-watch.log (or $XDG_STATE_HOME)
   macOS:   ~/Library/Logs/grepai/grepai-watch.log
@@ -99,6 +108,8 @@ func init() {
 	watchCmd.Flags().BoolVar(&watchStop, "stop", false, "Stop the background watcher")
 	watchCmd.Flags().StringVar(&watchWorkspace, "workspace", "", "Workspace name for multi-project mode")
 	watchCmd.Flags().BoolVar(&watchNoUI, "no-ui", false, "Disable interactive UI in foreground mode")
+	watchCmd.Flags().BoolVar(&watchOnce, "once", false, "Index the workspace once and exit (no daemon; requires --workspace)")
+	watchCmd.Flags().StringArrayVar(&watchProjects, "project", nil, "Limit one-shot index to these workspace projects (repeatable; requires --workspace --once)")
 }
 
 func runWatch(cmd *cobra.Command, args []string) error {
@@ -113,8 +124,17 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	if watchStop {
 		activeFlags++
 	}
+	if watchOnce {
+		activeFlags++
+	}
 	if activeFlags > 1 {
-		return fmt.Errorf("flags --background, --status, and --stop are mutually exclusive")
+		return fmt.Errorf("flags --background, --status, --stop, and --once are mutually exclusive")
+	}
+	if watchOnce && watchWorkspace == "" {
+		return fmt.Errorf("--once requires --workspace")
+	}
+	if len(watchProjects) > 0 && !watchOnce {
+		return fmt.Errorf("--project requires --workspace --once")
 	}
 
 	// Determine log directory
@@ -2628,6 +2648,14 @@ func runWorkspaceWatch(logDir string) error {
 	if err != nil {
 		return err
 	}
+	overlayCfg, overlayErr := config.LoadOverlayConfig()
+	if overlayErr == nil {
+		entry, ok := overlayCfg.Get(watchWorkspace)
+		ws = config.MergeOverlay(ws, entry, ok)
+	}
+	if err := filterWorkspaceProjects(ws, watchProjects); err != nil {
+		return err
+	}
 
 	// Validate backend (GOB not supported for workspaces)
 	if err := config.ValidateWorkspaceBackend(ws); err != nil {
@@ -2659,6 +2687,10 @@ func runWorkspaceWatch(logDir string) error {
 	}
 
 	// Run in foreground mode
+	if watchOnce {
+		workspaceSkipLiveWatch = true
+		defer func() { workspaceSkipLiveWatch = false }()
+	}
 	return runWorkspaceWatchForeground(logDir, ws)
 }
 
@@ -2857,6 +2889,16 @@ func runWorkspaceWatchForeground(logDir string, ws *config.Workspace) error {
 	if err != nil {
 		abortStores = isFatalWatcherError(err)
 		return err
+	}
+
+	if watchOnce {
+		if err := st.Persist(ctx); err != nil {
+			log.Printf("Warning: persist after --once: %v", err)
+		}
+		closeWatchSources(watchers)
+		closeWorkspaceStores(runtimes)
+		fmt.Printf("Workspace %s initial index complete (%d project(s))\n", ws.Name, len(runtimes))
+		return nil
 	}
 
 	var closeWatchersOnce sync.Once
@@ -3104,6 +3146,24 @@ func initializeWorkspaceRuntime(ctx context.Context, ws *config.Workspace, proje
 		}
 
 		manager = newRPGRealtimeManager(projectCfg.Watch.RPGMaxDirtyFilesPerBatch)
+	}
+
+	if workspaceSkipLiveWatch {
+		runtime := &workspaceProjectRuntime{
+			project:         project,
+			cfg:             projectCfg,
+			idx:             idx,
+			scanner:         scanner,
+			extractor:       extractor,
+			processor:       processorRegistry,
+			symbolStore:     symbolStore,
+			rpgEncoder:      rpgEncoder,
+			rpgStore:        rpgStore,
+			vectorStore:     vectorStore,
+			tracedLanguages: tracedLanguages,
+			manager:         manager,
+		}
+		return runtime, nil, nil
 	}
 
 	w, err := watcher.NewWatcher(project.Path, ignoreMatcher, projectCfg.Watch.DebounceMs)

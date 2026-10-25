@@ -16,10 +16,24 @@ type Recorder struct {
 
 // NewRecorder creates a Recorder that writes to the stats file inside projectRoot.
 func NewRecorder(projectRoot string) *Recorder {
+	return NewRecorderAt(StatsPath(projectRoot))
+}
+
+// NewRecorderAt writes to an explicit stats.json path (and path+".lock").
+func NewRecorderAt(statsPath string) *Recorder {
 	return &Recorder{
-		statsPath: StatsPath(projectRoot),
-		lockPath:  LockPath(projectRoot),
+		statsPath: statsPath,
+		lockPath:  statsPath + ".lock",
 	}
+}
+
+// NewUserRecorder writes to ~/.grepai/stats.json. Falls back to projectRoot if home is unavailable.
+func NewUserRecorder(fallbackProjectRoot string) *Recorder {
+	p, err := UserStatsPath()
+	if err != nil || p == "" {
+		return NewRecorder(fallbackProjectRoot)
+	}
+	return NewRecorderAt(p)
 }
 
 // Record appends one entry to the stats NDJSON file.

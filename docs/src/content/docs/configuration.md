@@ -125,6 +125,7 @@ embedder:
   model: nomic-embed-text
   endpoint: http://localhost:11434
   dimensions: 768
+  parallelism: 2
 ```
 
 Available models:

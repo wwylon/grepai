@@ -1,12 +1,16 @@
 package stats
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 // CommandType represents the type of grepai command that was executed.
 type CommandType = string
 
 const (
 	Search       CommandType = "search"
+	Grep         CommandType = "grep"
 	TraceCallers CommandType = "trace-callers"
 	TraceCallees CommandType = "trace-callees"
 	TraceGraph   CommandType = "trace-graph"
@@ -68,12 +72,19 @@ func GrepEquivalentTokens(resultCount int) int {
 
 // Entry represents a single recorded command event.
 type Entry struct {
-	Timestamp    string `json:"timestamp"`    // RFC3339 UTC
-	CommandType  string `json:"command_type"` // search | trace-callers | trace-callees | trace-graph
-	OutputMode   string `json:"output_mode"`  // full | compact | toon
+	Timestamp    string `json:"timestamp"`
+	CommandType  string `json:"command_type"`
+	OutputMode   string `json:"output_mode"`
 	ResultCount  int    `json:"result_count"`
-	OutputTokens int    `json:"output_tokens"` // estimated tokens in grepai output
-	GrepTokens   int    `json:"grep_tokens"`   // estimated tokens for grep equivalent
+	OutputTokens int    `json:"output_tokens"`
+	GrepTokens   int    `json:"grep_tokens"`
+	Query        string `json:"query,omitempty"`
+	Source       string `json:"source,omitempty"` // cli | mcp
+	Actor        string `json:"actor,omitempty"`  // GREPAI_STATS_ACTOR, MCP actor, or OS user
+	Workspace    string `json:"workspace,omitempty"`
+	Projects     string `json:"projects,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
 }
 
 // Summary is the aggregated view of all recorded entries.
@@ -86,6 +97,8 @@ type Summary struct {
 	CostSavedUSD  *float64       `json:"cost_saved_usd"`
 	ByCommandType map[string]int `json:"by_command_type"`
 	ByOutputMode  map[string]int `json:"by_output_mode"`
+	BySource      map[string]int `json:"by_source"`
+	ByActor       map[string]int `json:"by_actor"`
 }
 
 // DaySummary holds per-day aggregated stats for the --history view.
@@ -105,4 +118,13 @@ func StatsPath(projectRoot string) string {
 // LockPath returns the absolute path of the stats lock file.
 func LockPath(projectRoot string) string {
 	return filepath.Join(projectRoot, ".grepai", LockFileName)
+}
+
+// UserStatsPath is ~/.grepai/stats.json — shared across projects and workspaces.
+func UserStatsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".grepai", StatsFileName), nil
 }

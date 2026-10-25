@@ -52,6 +52,7 @@ func Summarize(entries []Entry, provider string) Summary {
 	s := Summary{
 		ByCommandType: map[string]int{
 			Search:       0,
+			Grep:         0,
 			TraceCallers: 0,
 			TraceCallees: 0,
 			TraceGraph:   0,
@@ -61,6 +62,8 @@ func Summarize(entries []Entry, provider string) Summary {
 			Compact: 0,
 			Toon:    0,
 		},
+		BySource: map[string]int{},
+		ByActor:  map[string]int{},
 	}
 
 	for _, e := range entries {
@@ -69,6 +72,16 @@ func Summarize(entries []Entry, provider string) Summary {
 		s.GrepTokens += e.GrepTokens
 		s.ByCommandType[e.CommandType]++
 		s.ByOutputMode[e.OutputMode]++
+		src := e.Source
+		if src == "" {
+			src = "unknown"
+		}
+		s.BySource[src]++
+		actor := e.Actor
+		if actor == "" {
+			actor = "unknown"
+		}
+		s.ByActor[actor]++
 	}
 
 	s.TokensSaved = s.GrepTokens - s.OutputTokens
@@ -82,6 +95,19 @@ func Summarize(entries []Entry, provider string) Summary {
 	}
 
 	return s
+}
+
+// RecentEntries returns the last n events (append order = chronological).
+func RecentEntries(entries []Entry, n int) []Entry {
+	if n <= 0 || len(entries) == 0 {
+		return nil
+	}
+	if n > len(entries) {
+		n = len(entries)
+	}
+	out := make([]Entry, n)
+	copy(out, entries[len(entries)-n:])
+	return out
 }
 
 // HistoryByDay groups entries by calendar day (UTC) and returns a slice

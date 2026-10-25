@@ -26,7 +26,10 @@ grepai includes a built-in MCP (Model Context Protocol) server that allows AI ag
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `grepai_search` | Semantic code search | `query` (required), `limit` (default: 10), `compact` (default: false), `root` |
+| `grepai_search` | Semantic code search | `query` (required), `limit`, `compact`, `path`, `workspace`, `projects`, `root` |
+| `grepai_grep` | Exact/regex search on workspace disks | `pattern` (required), `workspace`, `projects`, `regex` |
+| `grepai_overlay_attach` | Attach a session overlay path | `path` (required), `workspace`, `name`, `upstream` |
+| `grepai_overlay_detach` | Detach session overlay | `workspace` |
 | `grepai_trace_callers` | Find callers of a symbol | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false) |
 | `grepai_trace_callees` | Find callees of a symbol | `symbol` (required), `workspace`, `project`, `root`, `compact` (default: false) |
 | `grepai_trace_graph` | Build complete call graph | `symbol` (required), `workspace`, `project`, `root`, `depth` (default: 2) |
@@ -160,7 +163,7 @@ Without `--workspace`, the MCP server resolves its target in this order:
 2. Walk upward from current directory looking for `.grepai/config.yaml`
 3. Auto-detect workspace by checking if current directory is within a workspace project
 
-With `--workspace`, the server skips auto-detection and uses the specified workspace directly. The `grepai_search` tool will search across all workspace projects without the agent needing to pass `workspace` or `projects` parameters.
+With `--workspace`, the server skips auto-detection and uses the specified workspace directly. The `grepai_search` tool will search across all workspace projects without the agent needing to pass `workspace` or `projects` parameters. Pass `projects` and `path` to scope the same way as the CLI `--project` / `--path` flags.
 
 If no local `.grepai/` project is found but global workspaces are configured, `grepai mcp-serve` can still start without `--workspace`. In that mode, tools can receive `workspace` dynamically in each request.
 
@@ -202,7 +205,7 @@ Before using MCP mode, ensure:
 
 1. grepai is installed and in your PATH
 2. The project has been initialized (`grepai init`) or a workspace is configured (`grepai workspace create`)
-3. The index has been built (`grepai watch` or `grepai watch --workspace my-fullstack`)
+3. The index has been built (`grepai watch --once --workspace my-fullstack` or `grepai watch --workspace my-fullstack`)
 
 ## Troubleshooting
 

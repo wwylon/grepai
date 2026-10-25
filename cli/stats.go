@@ -17,6 +17,7 @@ var (
 	statsHistory bool
 	statsLimit   int
 	statsNoUI    bool
+	statsRecent  int
 )
 
 var statsCmd = &cobra.Command{
@@ -25,9 +26,11 @@ var statsCmd = &cobra.Command{
 	Long: `Display a summary of token savings achieved by grepai compared to
 a traditional grep-based workflow.
 
-Every successful search and trace command records an entry locally in
-.grepai/stats.json. This command aggregates those entries and shows
-how many tokens (and optionally dollars) have been saved.`,
+Search and trace commands append to ~/.grepai/stats.json (shared across
+projects and workspaces). Each event stores who invoked grepai (cli/mcp + actor)
+and the query. Use --recent to list those events.
+
+Set GREPAI_STATS_ACTOR or pass MCP actor to label an agent session.`,
 	RunE: runStats,
 }
 
@@ -37,23 +40,32 @@ func init() {
 	statsCmd.Flags().BoolVar(&statsHistory, "history", false, "Show per-day history breakdown")
 	statsCmd.Flags().IntVarP(&statsLimit, "limit", "l", 30, "Max days shown with --history")
 	statsCmd.Flags().BoolVar(&statsNoUI, "no-ui", false, "Print plain text instead of interactive UI")
+	statsCmd.Flags().IntVar(&statsRecent, "recent", 0, "Show the N most recent events (who/query); 0 skips")
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
-	projectRoot, err := config.FindProjectRoot()
-	if err != nil {
-		return err
+	var entries []stats.Entry
+	if userPath, err := stats.UserStatsPath(); err == nil {
+		userEntries, readErr := stats.ReadAll(userPath)
+		if readErr != nil {
+			return fmt.Errorf("failed to read stats: %w", readErr)
+		}
+		entries = userEntries
 	}
 
-	cfg, err := config.Load(projectRoot)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	statsPath := stats.StatsPath(projectRoot)
-	entries, err := stats.ReadAll(statsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read stats: %w", err)
+	projectRoot, _ := config.FindProjectRoot()
+	provider := ""
+	if projectRoot != "" {
+		if cfg, err := config.Load(projectRoot); err == nil {
+			provider = cfg.Embedder.Provider
+		}
+		if len(entries) == 0 {
+			local, err := stats.ReadAll(stats.StatsPath(projectRoot))
+			if err != nil {
+				return fmt.Errorf("failed to read stats: %w", err)
+			}
+			entries = local
+		}
 	}
 
 	if len(entries) == 0 {
@@ -62,42 +74,72 @@ func runStats(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	summary := stats.Summarize(entries, cfg.Embedder.Provider)
+	summary := stats.Summarize(entries, provider)
 
 	if statsJSON {
 		return outputStatsJSON(summary, entries)
 	}
 
-	if shouldUseStatsUI(isInteractiveTerminal(), statsNoUI) && !statsHistory {
-		return runStatsUI(summary, entries, cfg.Embedder.Provider)
+	if err := outputStatsHuman(summary, entries, provider); err != nil {
+		return err
 	}
-
-	return outputStatsHuman(summary, entries, cfg.Embedder.Provider)
+	printRecentEvents(entries, statsRecent)
+	return nil
 }
 
 // outputStatsJSON renders the summary (and optional history) as JSON.
 func outputStatsJSON(summary stats.Summary, entries []stats.Entry) error {
-	if !statsHistory {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(summary)
-	}
-
-	days := stats.HistoryByDay(entries)
-	if statsLimit > 0 && len(days) > statsLimit {
-		days = days[:statsLimit]
-	}
-
 	out := struct {
 		Summary stats.Summary      `json:"summary"`
-		History []stats.DaySummary `json:"history"`
+		History []stats.DaySummary `json:"history,omitempty"`
+		Recent  []stats.Entry      `json:"recent,omitempty"`
 	}{
 		Summary: summary,
-		History: days,
+	}
+	if statsHistory {
+		days := stats.HistoryByDay(entries)
+		if statsLimit > 0 && len(days) > statsLimit {
+			days = days[:statsLimit]
+		}
+		out.History = days
+	}
+	n := statsRecent
+	if n == 0 && (statsHistory || statsJSON) {
+		n = 50
+	}
+	if statsRecent > 0 {
+		n = statsRecent
+	}
+	if n > 0 {
+		out.Recent = stats.RecentEntries(entries, n)
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+func printRecentEvents(entries []stats.Entry, n int) {
+	if n <= 0 {
+		return
+	}
+	recent := stats.RecentEntries(entries, n)
+	fmt.Println("\nRecent queries:")
+	for _, e := range recent {
+		who := e.Actor
+		if who == "" {
+			who = "?"
+		}
+		src := e.Source
+		if src == "" {
+			src = "?"
+		}
+		q := e.Query
+		if q == "" {
+			q = "(no query recorded)"
+		}
+		fmt.Printf("  %s  %s/%s  %s  %q  hits=%d  ws=%s  projects=%s\n",
+			e.Timestamp, src, who, e.CommandType, q, e.ResultCount, e.Workspace, e.Projects)
+	}
 }
 
 // outputStatsHuman renders the summary using lipgloss styles.

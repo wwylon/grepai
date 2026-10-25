@@ -35,6 +35,15 @@ grepai search "validation" --path src/middleware/ --limit 10
 grepai search "database queries" --json --compact
 ```
 
+### Exact workspace grep
+
+`grepai grep` searches workspace project roots on disk (literal or `--regex`). It does not call the embedder. Use it when you know a symbol or string; use semantic `grepai search` when you care about meaning.
+
+```bash
+grepai grep HandleLogin --workspace my-fullstack
+grepai grep 'func Handle' --workspace my-fullstack --regex --project api
+```
+
 ### How It Works
 
 1. **Query embedding**: Your search query is converted to a vector using the configured embedder (Ollama, OpenAI, or LM Studio)

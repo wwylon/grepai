@@ -357,6 +357,10 @@ grepai search "security vulnerabilities" --json --compact
 For multi-project setups, the watcher can index all projects in a workspace using a shared vector store:
 
 ```bash
+# One-shot workspace index (CI / cold index; no daemon)
+grepai watch --workspace my-fullstack --once
+grepai watch --workspace my-fullstack --once --project frontend
+
 # Start workspace watcher (foreground)
 grepai watch --workspace my-fullstack
 

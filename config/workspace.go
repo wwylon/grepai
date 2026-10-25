@@ -34,8 +34,9 @@ type Workspace struct {
 
 // ProjectEntry represents a single project within a workspace.
 type ProjectEntry struct {
-	Name string `yaml:"name"`
-	Path string `yaml:"path"`
+	Name     string            `yaml:"name"`
+	Path     string            `yaml:"path"`
+	Metadata map[string]string `yaml:"metadata,omitempty"`
 }
 
 // GetGlobalConfigDir returns the global grepai config directory path.

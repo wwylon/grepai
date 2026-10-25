@@ -92,8 +92,15 @@ grepai workspace add my-fullstack /path/to/shared-lib
 ### 3. Start Indexing
 
 ```bash
-# Foreground mode
+# Foreground mode (live watch)
 grepai watch --workspace my-fullstack
+
+# One-shot index then serve (CI / cold index; no daemon)
+grepai watch --workspace my-fullstack --once
+grepai mcp-serve --workspace my-fullstack
+
+# Refresh selected projects only
+grepai watch --workspace my-fullstack --once --project frontend --project api
 
 # Background mode
 grepai watch --workspace my-fullstack --background
@@ -107,6 +114,9 @@ grepai search --workspace my-fullstack "authentication flow"
 
 # Search specific project only
 grepai search --workspace my-fullstack --project frontend "React components"
+
+# Exact text across the same workspace roots (no embeddings)
+grepai grep AuthToken --workspace my-fullstack --project frontend
 ```
 
 ## Configuration File
@@ -132,6 +142,9 @@ workspaces:
         path: /path/to/frontend
       - name: backend
         path: /path/to/backend
+        metadata:
+          upstream: frontend
+          ref: feature-branch
       - name: shared-lib
         path: /path/to/shared-lib
 ```
@@ -147,8 +160,9 @@ grepai workspace list
 # Show workspace details
 grepai workspace show my-fullstack
 
-# Check workspace status
+# Check workspace status (per-project documents, chunks, freshness)
 grepai workspace status my-fullstack
+grepai workspace status my-fullstack --json
 
 # Delete a workspace
 grepai workspace delete my-fullstack
@@ -159,6 +173,7 @@ grepai workspace delete my-fullstack
 ```bash
 # Add project to workspace
 grepai workspace add my-fullstack /path/to/project
+grepai workspace add my-fullstack /path/to/worktree --name feature --metadata upstream=frontend
 
 # Remove project from workspace
 grepai workspace remove my-fullstack project-name
@@ -167,8 +182,9 @@ grepai workspace remove my-fullstack project-name
 ### Watch Commands
 
 ```bash
-# Start workspace watcher (foreground)
-grepai watch --workspace my-fullstack
+# One-shot index (no daemon)
+grepai watch --workspace my-fullstack --once
+grepai watch --workspace my-fullstack --once --project frontend
 
 # Start workspace watcher (background)
 grepai watch --workspace my-fullstack --background
@@ -192,7 +208,10 @@ grepai search --workspace my-fullstack --project frontend --project backend "que
 
 # Filter by path prefix (searches only files in matching paths)
 grepai search --workspace my-fullstack --path src/ "query"
-grepai search --workspace my-fullstack --project frontend --path components/ "React hooks"
+
+# Exact / regex across workspace roots (on disk, no embedder)
+grepai grep PATTERN --workspace my-fullstack
+grepai grep PATTERN --workspace my-fullstack --regex --project frontend
 
 # JSON output for AI agents
 grepai search --workspace my-fullstack "query" --json
@@ -221,6 +240,16 @@ claude mcp add grepai -- grepai mcp-serve --workspace my-fullstack
 ```
 
 When `--workspace` is set, the MCP server **auto-injects** the workspace into every search request. AI agents can call `grepai_search` with just a query — no need to pass `workspace` or `projects` parameters. Cross-project search works by default.
+
+`grepai_search` also accepts `projects` (comma-separated names) and `path` (prefix relative to each selected project). `grepai_grep` performs exact/regex search on disk. Overlay attach/detach tools add a temporary extra checkout for the session.
+
+### Session overlay (git worktrees)
+
+```bash
+grepai workspace overlay attach my-fullstack /path/to/worktree --name feature --upstream frontend
+grepai watch --workspace my-fullstack --once --project feature
+grepai workspace overlay detach my-fullstack
+```
 
 ### Manual Workspace Parameters
 
@@ -325,6 +354,10 @@ grepai watch --workspace my-workspace
 **Note:** If you don't clean old chunks, searches may return duplicate results (one with prefix, one without). This only affects the transition period.
 
 ## Troubleshooting
+
+### Windows workspace restart re-embeds everything
+
+On Windows, relative paths from the filesystem scanner used backslashes while the store used forward slashes. A workspace `watch` restart then treated every file as deleted and rebuilt the index. grepai now stores and compares paths with forward slashes. If you still see a mass re-embed after upgrading, stop the watcher and run `grepai watch --workspace NAME --once` once to rebuild cleanly.
 
 ### "GOB backend not supported"
 

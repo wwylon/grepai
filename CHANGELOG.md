@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One-shot workspace index**: `grepai watch --workspace NAME --once` builds the initial workspace index and exits without leaving a daemon. Repeatable `--project` limits which members are scanned
+- **Workspace status stats**: `grepai workspace status` reports per-project document/chunk counts, index size, and last update; `--json` for scripts
+- **Optional project metadata**: workspace projects may include a `metadata` string map (CLI `--metadata key=value`)
+- **Session overlay**: `grepai workspace overlay attach|detach|show` and MCP `grepai_overlay_attach` / `grepai_overlay_detach` for a temporary extra checkout
+- **Exact workspace grep**: `grepai grep` and MCP `grepai_grep` search on-disk project roots (ripgrep when available) without calling the embedder
+- **Ollama BatchEmbedder**: local Ollama embeddings honor `embedder.parallelism` during workspace indexing
+
+### Fixed
+
+- **Workspace stats only in the cwd project**: search/trace usage is stored in `~/.grepai/stats.json`, so `grepai stats` works from any workspace member
+- **Usage events include who and what**: each search/grep/trace records source (`cli`/`mcp`), actor (`GREPAI_STATS_ACTOR`, MCP `actor`, or OS user), query text, workspace, and projects. `grepai stats --recent N` lists them
+- **Windows workspace restarts wiping the index**: scanner relative paths and orphan-delete keys are normalized to forward slashes so Postgres-backed workspace watch restarts stay incremental
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

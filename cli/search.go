@@ -297,7 +297,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Print(outputStr)
-		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		recordSearchStats(projectRoot, searchStatsEntry(query, len(results), outputModeFromFlags(searchJSON, searchTOON, searchCompact)), outputStr)
 		return nil
 	}
 
@@ -314,13 +314,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Print(outputStr)
-		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		recordSearchStats(projectRoot, searchStatsEntry(query, len(results), outputModeFromFlags(searchJSON, searchTOON, searchCompact)), outputStr)
 		return nil
 	}
 
 	if len(results) == 0 {
 		fmt.Println("No results found.")
-		recordSearchStats(projectRoot, stats.Search, stats.Full, 0, "")
+		recordSearchStats(projectRoot, searchStatsEntry(query, 0, stats.Full), "")
 		return nil
 	}
 
@@ -358,7 +358,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	outputStr := buf.String()
 	fmt.Print(outputStr)
-	recordSearchStats(projectRoot, stats.Search, stats.Full, len(results), outputStr)
+	recordSearchStats(projectRoot, searchStatsEntry(query, len(results), stats.Full), outputStr)
 	return nil
 }
 
@@ -373,22 +373,33 @@ func outputModeFromFlags(jsonFlag, toonFlag, compactFlag bool) stats.OutputMode 
 	return stats.Full
 }
 
-// recordSearchStats fires a goroutine to record a stats entry without blocking.
-func recordSearchStats(projectRoot, commandType, outputMode string, resultCount int, outputStr string) {
-	rec := stats.NewRecorder(projectRoot)
-	entry := stats.Entry{
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		CommandType:  commandType,
-		OutputMode:   outputMode,
-		ResultCount:  resultCount,
-		OutputTokens: embedder.EstimateTokens(outputStr),
-		GrepTokens:   stats.GrepEquivalentTokens(resultCount),
+// recordSearchStats writes a local stats entry. CLI processes exit immediately
+// after search, so this is synchronous (MCP recording stays fire-and-forget).
+func recordSearchStats(projectRoot string, e stats.Entry, outputStr string) {
+	if e.Timestamp == "" {
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		_ = rec.Record(ctx, entry)
-	}()
+	e.OutputTokens = embedder.EstimateTokens(outputStr)
+	if e.GrepTokens == 0 {
+		e.GrepTokens = stats.GrepEquivalentTokens(e.ResultCount)
+	}
+	stats.FillIdentity(&e, stats.SourceCLI)
+	rec := stats.NewUserRecorder(projectRoot)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = rec.Record(ctx, e)
+}
+
+func searchStatsEntry(query string, resultCount int, mode string) stats.Entry {
+	return stats.Entry{
+		CommandType: stats.Search,
+		OutputMode:  mode,
+		ResultCount: resultCount,
+		Query:       query,
+		Workspace:   searchWorkspace,
+		Projects:    strings.Join(searchProjects, ","),
+		Path:        searchPath,
+	}
 }
 
 // captureSearchJSON returns JSON-encoded results as a string.
@@ -553,6 +564,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 	if err != nil {
 		return err
 	}
+	ws = mergeWorkspaceOverlay(ws, searchWorkspace)
 
 	normalizedPath, resolvedProjects, err := search.NormalizeWorkspacePathPrefix(pathOpt, ws, projects)
 	if err != nil {
@@ -643,6 +655,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 		}
 		results = filteredResults
 	}
+	results = preferWorkspaceOverlay(results, ws)
 
 	// Workspace mode doesn't have RPG enrichment (no single projectRoot)
 	enrichments := make([]rpgEnrichment, len(results))
@@ -662,7 +675,7 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 			return err
 		}
 		fmt.Print(outputStr)
-		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		recordSearchStats(projectRoot, searchStatsEntry(query, len(results), outputModeFromFlags(searchJSON, searchTOON, searchCompact)), outputStr)
 		return nil
 	}
 
@@ -679,13 +692,13 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 			return err
 		}
 		fmt.Print(outputStr)
-		recordSearchStats(projectRoot, stats.Search, outputModeFromFlags(searchJSON, searchTOON, searchCompact), len(results), outputStr)
+		recordSearchStats(projectRoot, searchStatsEntry(query, len(results), outputModeFromFlags(searchJSON, searchTOON, searchCompact)), outputStr)
 		return nil
 	}
 
 	if len(results) == 0 {
 		fmt.Println("No results found.")
-		recordSearchStats(projectRoot, stats.Search, stats.Full, 0, "")
+		recordSearchStats(projectRoot, searchStatsEntry(query, 0, stats.Full), "")
 		return nil
 	}
 
@@ -724,6 +737,6 @@ func runWorkspaceSearch(ctx context.Context, query string, projects []string, pa
 
 	outputStr := buf.String()
 	fmt.Print(outputStr)
-	recordSearchStats(projectRoot, stats.Search, stats.Full, len(results), outputStr)
+	recordSearchStats(projectRoot, searchStatsEntry(query, len(results), stats.Full), outputStr)
 	return nil
 }

@@ -49,7 +49,12 @@ embedder:
   model: nomic-embed-text
   endpoint: http://localhost:11434
   dimensions: 768
+  parallelism: 2  # concurrent embed requests (1 = sequential)
 ```
+
+### Parallelism (Ollama)
+
+`embedder.parallelism` is honored for Ollama during batch indexing (same setting OpenAI uses). On a single-GPU host start with `1` or `2`. Higher values can saturate the GPU and increase latency.
 
 ### Available Models
 

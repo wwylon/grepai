@@ -157,6 +157,20 @@ func registerCompletions() {
 		return completeProjectNames(wsName), cobra.ShellCompDirectiveNoFileComp
 	}
 	_ = searchCmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	_ = grepCmd.RegisterFlagCompletionFunc("workspace", workspaceCompleter)
+	_ = grepCmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	_ = watchCmd.RegisterFlagCompletionFunc("project", projectCompleter)
+	for _, cmd := range []*cobra.Command{
+		workspaceOverlayAttachCmd, workspaceOverlayDetachCmd, workspaceOverlayShowCmd,
+	} {
+		c := cmd
+		c.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return completeWorkspaceNames(), cobra.ShellCompDirectiveNoFileComp
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	}
 	for _, cmd := range []*cobra.Command{refsReadersCmd, refsWritersCmd, refsGraphCmd} {
 		_ = cmd.RegisterFlagCompletionFunc("project", projectCompleter)
 	}

@@ -35,6 +35,9 @@ func NewFromConfig(cfg *config.Config) (Embedder, error) {
 		if timeout > 0 {
 			opts = append(opts, WithOllamaTimeout(timeout))
 		}
+		if cfg.Embedder.Parallelism > 0 {
+			opts = append(opts, WithOllamaParallelism(cfg.Embedder.Parallelism))
+		}
 		return NewOllamaEmbedder(opts...), nil
 
 	case "openai":
